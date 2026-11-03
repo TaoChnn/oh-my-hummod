@@ -87,7 +87,7 @@ EXE name.
 
 `hummod_status` `hummod_start` `hummod_restart` `hummod_inspect`
 `hummod_navigate` `hummod_menu_command` `hummod_go` (waits for completion)
-`hummod_radio` (by profile label **or** ordinal, returns checked states)
+`hummod_radio` (by profile label **or** ordinal, returns checked states) `hummod_action` (canvas "!" triggers, e.g. CPR defibrillation - must run during simulation)
 `hummod_edit` `hummod_slider` `hummod_snapshot` (SOL export + variable
 parsing) `hummod_get_vars` `hummod_history` (time series, plot-ready) `hummod_dismiss_modal` `hummod_profile`.
 

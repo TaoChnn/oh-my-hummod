@@ -242,6 +242,29 @@ def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | No
 
 @server.tool()
 @safe
+def hummod_action(panel_path: str, ordinal: int, expected: int | None = None) -> str:
+    """Click an action button on a panel page - the canvas triggers drawn as '!'
+    buttons (e.g. CPR Draw Blood / Shock Now on Intervention/CPR and
+    Trauma/Ventricular Fibrillation). Ordinal among action buttons sorted by
+    control id; expected = total count (guardrail). Counts and meanings per
+    panel live in profile radio_semantics/action notes."""
+    b, _ = get_bridge()
+    _navigate(panel_path)
+    actions = sorted([c for c in b.controls()
+                      if c.cls == "Button" and c.text.strip() == "!"],
+                     key=lambda c: c.ctrl_id)
+    if expected is not None and len(actions) != expected:
+        raise RuntimeError(f"action count mismatch: found {len(actions)}, expected {expected}")
+    if ordinal < 0 or ordinal >= len(actions):
+        raise RuntimeError(f"ordinal {ordinal} out of range ({len(actions)} action buttons)")
+    b.press(actions[ordinal].hwnd)
+    time.sleep(0.15)
+    return json.dumps({"ok": True, "panel": panel_path,
+                       "action_ordinal": ordinal, "count": len(actions)})
+
+
+@server.tool()
+@safe
 def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None = None) -> str:
     """Set an Edit (text) control on a panel page and click its apply button ("> button adjacent by control id). Ords per page from hummod_inspect; expected = total edit count (guardrail)."""
     b, _ = get_bridge()

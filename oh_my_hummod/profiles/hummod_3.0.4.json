@@ -37,6 +37,24 @@
       "left switch on": 5,
       "right switch off": 6,
       "right switch on": 7
+    },
+    "Intervention/CPR": {
+      "heart off": 0,
+      "heart on": 1,
+      "lungs off": 2,
+      "lungs on": 3
+    },
+    "Trauma/Ventricular Fibrillation": {
+      "off": 0,
+      "on": 1
+    }
+  },
+  "action_semantics": {
+    "Trauma/Ventricular Fibrillation": {
+      "0": "Shock Now (defibrillate, 100 J = 0.8 x LeftHeart-Function.Effect). MUST be clicked while the simulation is RUNNING - idle clicks are ignored. Success = Heart-VFib.Is_Fibrillating flips to 0 (verify via snapshot); Heart-Defibrillator.TotalShocks does NOT increment reliably. Shocks at the same sim-time step share one random draw - advance time before retrying."
+    },
+    "Trauma/Hemorrhage": {
+      "0": "Reset Volume"
     }
   },
   "bind_marker": "Sizing"

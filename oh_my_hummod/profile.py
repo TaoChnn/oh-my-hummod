@@ -27,6 +27,7 @@ class Profile:
     quirks: dict = field(default_factory=dict)
     page_ids: dict = field(default_factory=dict)   # optional curated panel path -> cmd id
     radio_semantics: dict = field(default_factory=dict)  # panel path -> {"on": ordinal, "off": ordinal, ...}
+    action_semantics: dict = field(default_factory=dict)  # panel path -> {"0": "meaning", ...}
     panels: dict = field(default_factory=dict)     # version-specific panel paths for tests/demos
 
     @classmethod
