@@ -320,10 +320,25 @@ class Bridge:
 
     # ---------- run / completion ----------
 
-    def wait_idle(self, stop_cmd_id: int, timeout: float = 600.0) -> float:
-        """Poll until the Stop menu item grays out (simulation finished)."""
+    def wait_idle(self, stop_cmd_id: int, timeout: float = 600.0,
+                  start_grace: float = 8.0) -> float:
+        """Poll until the Stop menu item grays out (simulation finished).
+
+        Two phases, because some engines (QCP) keep Stop grayed even when idle:
+        1. wait for Stop to become *enabled* (simulation actually started) within
+           start_grace; if it never enables, the command was a no-op / already idle
+        2. wait for Stop to gray again = finished
+        """
         t0 = time.time()
         time.sleep(0.4)
+        started = False
+        while time.time() - t0 < start_grace:
+            if self.menu_item_enabled(stop_cmd_id):
+                started = True
+                break
+            time.sleep(0.2)
+        if not started:
+            return time.time() - t0  # never started: treat as idle
         while time.time() - t0 < timeout:
             if not self.menu_item_enabled(stop_cmd_id):
                 return time.time() - t0
@@ -368,7 +383,8 @@ class Bridge:
 
     def save_file_dialog(self, command_id: int, target_path: str,
                          edit_ids: tuple[int, ...] = (1001, 1148),
-                         timeout: float = 60.0) -> None:
+                         timeout: float = 60.0,
+                         tail_markers: tuple[str, ...] = ("</solution>", "</ics>")) -> None:
         """Trigger File > Save Solution/ICs and drive the native Save dialog."""
         import os
         target_path = os.path.abspath(target_path)
@@ -395,21 +411,28 @@ class Bridge:
             raise RuntimeError("unrecognized file dialog; inspect the engine")
         self.set_text(edit.hwnd, target_path)
         user32.PostMessageW(button.hwnd, BM_CLICK, 0, 0)
-        # The engine keeps writing after the dialog closes; SOL vars are written
-        # alphabetically, so wait for the closing tag and a stable size.
+        # The engine keeps writing after the dialog closes (SOL vars are written
+        # alphabetically). If the format has a closing tag, wait for it; otherwise
+        # (e.g. QCP ICS) a stable file size means the writer is done.
         deadline = time.time() + timeout
         last_size = -1
+        stable_seen = False
         while time.time() < deadline:
             if os.path.exists(target_path) and not self.busy():
                 try:
                     size = os.path.getsize(target_path)
                     if size == last_size and size > 0:
                         with open(target_path, "rb") as f:
-                            f.seek(max(0, size - 64))
-                            tail = f.read().decode("utf-8", "replace")
-                        if "</solution>" in tail or "</ics>" in tail.lower():
+                            f.seek(max(0, size - 256))
+                            tail = f.read().decode("utf-8", "replace").lower()
+                        if any(m in tail for m in tail_markers):
                             return
-                    last_size = size if size != last_size else last_size
+                        if stable_seen:  # no marker expected for this format
+                            return
+                        stable_seen = True
+                    else:
+                        stable_seen = False
+                    last_size = size
                 except OSError:
                     pass
             time.sleep(0.1)

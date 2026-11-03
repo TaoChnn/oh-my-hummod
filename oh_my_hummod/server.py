@@ -25,12 +25,12 @@ from mcp.server.mcpserver import MCPServer
 try:
     from .bridge import Bridge
     from .profile import Profile
-    from .solver import parse_sol
+    from .solver import parse_export
 except ImportError:  # run as a plain script: python oh_my_hummod/server.py
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from oh_my_hummod.bridge import Bridge
     from oh_my_hummod.profile import Profile
-    from oh_my_hummod.solver import parse_sol
+    from oh_my_hummod.solver import parse_export
 
 ENGINE_DIR = os.environ.get("HUMMOD_ENGINE_DIR", os.path.join(os.getcwd(), "engine"))
 PROFILE_NAME = os.environ.get("HUMMOD_PROFILE", "")
@@ -291,19 +291,29 @@ def _parent_of(hwnd: int) -> int:
 @server.tool()
 @safe
 def hummod_snapshot(name: str, vars: list[str] | None = None) -> str:
-    """Export engine state as .SOL (File > Save Solution, dialog automated) into the MCP output dir; optionally parse named variables. Returns path + values (includes System.X sim time)."""
+    """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables. Returns path + values (System.X = sim time on HumMod)."""
     b, p = get_bridge()
     os.makedirs(OUTDIR, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-    path = os.path.join(OUTDIR, safe_name + (".SOL" if not safe_name.lower().endswith(".sol") else ""))
-    if os.path.exists(path):
-        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".SOL")
     save_id = p.file.get("save_sol")
-    if save_id is None:
-        save_id = b.menu_tree().walk("File/Save Solution").cmd_id
-    b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids))
-    want = {v.lower() for v in (vars or ["System.X"])}
-    vals = parse_sol(path, want)
+    if save_id is not None:
+        path = os.path.join(OUTDIR, safe_name + (".SOL" if not safe_name.lower().endswith(".sol") else ""))
+        if os.path.exists(path):
+            path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".SOL")
+        b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids),
+                           tail_markers=("</solution>",))
+    else:  # QCP family: ICs snapshot instead of SOL
+        save_id = p.file.get("save_ics")
+        if save_id is None:
+            save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
+        path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
+        if os.path.exists(path):
+            path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
+        b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+    want = {v.lower() for v in (vars or [])}
+    if not want and p.file.get("save_sol") is not None:
+        want = {"system.x"}  # default sim-time probe for HumMod SOLs
+    vals = parse_export(path, want or None)
     return json.dumps({"ok": True, "path": path, "values": vals})
 
 
