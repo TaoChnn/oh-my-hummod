@@ -126,3 +126,25 @@ python tests\test_solver.py  # parser unit tests (fixtures included, no engine n
 This project is original code (MIT). Engine EXEs are untouched; model XML files
 are GPL-2.0 (editable). Compatible with HumMod's published terms: personal,
 educational and research use.
+
+## Citation
+
+If your laboratory or research uses this tool, please cite the repository:
+
+> TaoChnn. *Oh My HumMod* (v0.1.0). MCP server driving HumMod / QCP
+> physiology engines via window messages.
+> https://github.com/TaoChnn/oh-my-hummod (accessed <date>).
+
+BibTeX:
+
+```bibtex
+@misc{ohmyhummod2026,
+  author       = {TaoChnn},
+  title        = {Oh My HumMod: an MCP server driving HumMod / QCP physiology
+                  engines via window messages},
+  howpublished = {\url{https://github.com/TaoChnn/oh-my-hummod}},
+  year         = {2026},
+  note         = {v0.1.0, accessed <date>}
+}
+```
+

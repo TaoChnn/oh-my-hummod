@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 TaoChnn
+Repository: https://github.com/TaoChnn/oh-my-hummod
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,3 +26,10 @@ this repository and remain the property of their respective owners
 (University of Mississippi Medical Center / HC Simulations LLC). Model XML
 descriptions are licensed GPL-2.0 by their authors. This project drives the
 unmodified engine via public operating-system mechanisms only.
+
+Academic attribution request (courtesy, not a restriction on the MIT grant):
+if this tool is used in laboratory work or research that leads to a report,
+thesis, or publication, please cite the repository, e.g.:
+
+    TaoChnn. Oh My HumMod (v0.1.0).
+    https://github.com/TaoChnn/oh-my-hummod (accessed <date>).
