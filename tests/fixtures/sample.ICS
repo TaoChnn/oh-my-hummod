@@ -1,0 +1,22 @@
+{ NOTE 1 "Mr. Norm or Ms. Norma Subject is
+middle-aged and apparently in good
+health.
+
+Hospital records show an uneventful
+appendectomy at age 12." }
+{ VAR "PI" 3.14159265359 }
+{ VAR "BREAKFLAG" 0. }
+{ VAR "SOLNINT" 1. }
+{ VAR "DISPINT" 0.1666666 }
+{ VAR "DX" 3.99999999345368e-007 }
+{ VAR "X" 3. }
+{ VAR "NORMAL" -0.948554570146793 }
+{ VAR "RANDOM" -0.768791772209845 }
+{ VAR "PI" 3.14159265359 }
+{ VAR "BREAKFLAG" 0. }
+{ VAR "SOLNINT" 1. }
+{ VAR "DISPINT" 0.1666666 }
+{ VAR "DX" 3.99999999345368e-007 }
+{ VAR "X" 3. }
+{ VAR "NORMAL" -0.948554570146793 }
+{ VAR "RANDOM" -0.768791772209845 }

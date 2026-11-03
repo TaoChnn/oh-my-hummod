@@ -25,12 +25,12 @@ from mcp.server.mcpserver import MCPServer
 try:
     from .bridge import Bridge
     from .profile import Profile
-    from .solver import parse_export
+    from .solver import parse_export, parse_sol, parse_sol_history
 except ImportError:  # run as a plain script: python oh_my_hummod/server.py
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from oh_my_hummod.bridge import Bridge
     from oh_my_hummod.profile import Profile
-    from oh_my_hummod.solver import parse_export
+    from oh_my_hummod.solver import parse_export, parse_sol, parse_sol_history
 
 ENGINE_DIR = os.environ.get("HUMMOD_ENGINE_DIR", os.path.join(os.getcwd(), "engine"))
 PROFILE_NAME = os.environ.get("HUMMOD_PROFILE", "")
@@ -324,6 +324,18 @@ def hummod_get_vars(sol_path: str, names: list[str]) -> str:
     want = {n.lower() for n in names}
     vals = parse_sol(sol_path, want)
     return json.dumps({"values": vals, "missing": [n for n in names if n.lower() not in vals]})
+
+
+@server.tool()
+@safe
+def hummod_history(sol_path: str, vars: list[str], max_points: int = 500) -> str:
+    """Time series from a .SOL export: simulation-time axis (System.X) plus one series per requested variable (e.g. 'BloodVol.Vol'), downsampled to max_points (latest sample always included). Plot-ready."""
+    try:
+        hist = parse_sol_history(sol_path, set(vars), max_points=max_points)
+        return json.dumps({"ok": True, **hist})
+    except KeyError as e:
+        return json.dumps({"ok": False,
+                           "error": f"{e}; note: history requires HumMod .SOL (QCP .ICS has no time series)"})
 
 
 @server.tool()

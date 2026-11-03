@@ -89,7 +89,7 @@ EXE name.
 `hummod_navigate` `hummod_menu_command` `hummod_go` (waits for completion)
 `hummod_radio` (by profile label **or** ordinal, returns checked states)
 `hummod_edit` `hummod_slider` `hummod_snapshot` (SOL export + variable
-parsing) `hummod_get_vars` `hummod_dismiss_modal` `hummod_profile`.
+parsing) `hummod_get_vars` `hummod_history` (time series, plot-ready) `hummod_dismiss_modal` `hummod_profile`.
 
 Errors return one-line JSON; unknown menu paths list the available siblings so
 agents can self-correct.
