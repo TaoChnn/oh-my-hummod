@@ -1,0 +1,18 @@
+{
+  "name": "avphummod",
+  "exe_names": ["HumMod.EXE"],
+  "file": { "load_ics": 1, "save_ics": 2, "load_sol": 3, "save_sol": 4, "exit": 5 },
+  "dialog_edit_ids": [1001, 1148],
+  "stop_cmd_id": 6,
+  "bind_marker": "Sizing",
+  "quirks": {
+    "lineage": "Modular-architecture AVP build; menu skeleton identical to hummod_3.0.4 (Stop=6, Go 12-30, Trauma/Hemorrhage=741); verified by engine_smoke with the 3.0.4 profile. Ships Model Solver.exe + ScriptedController.exe.",
+    "slider_commits": false,
+    "model_noise": true
+  },
+  "page_ids": { "Trauma/Hemorrhage": 741 },
+  "radio_semantics": {
+    "Trauma/Hemorrhage": { "off": 0, "on": 1 }
+  },
+  "panels": {}
+}

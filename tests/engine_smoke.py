@@ -16,15 +16,20 @@ from oh_my_hummod.solver import parse_sol   # noqa: E402
 
 
 def find_panel(tree, needle, path=""):
-    """DFS for a menu item whose label contains needle; returns its path."""
-    for child in tree.children:
-        p = f"{path}/{child.label}" if path else child.label
-        if needle.lower() in child.label.lower() and child.cmd_id is not None:
-            return p
-        if child.children:
-            hit = find_panel(child, needle, p)
-            if hit:
-                return hit
+    """DFS for a menu item; exact label match wins over substring, shorter path wins."""
+    exact, partial = [], []
+    def dfs(node, p):
+        for c in node.children:
+            cp = f"{p}/{c.label}" if p else c.label
+            if needle.lower() in c.label.lower() and c.cmd_id is not None:
+                (exact if c.label.lower() == needle.lower() else partial).append(cp)
+            if c.children:
+                dfs(c, cp)
+    dfs(tree, path)
+    if exact:
+        return sorted(exact, key=len)[0]
+    if partial:
+        return sorted(partial, key=len)[0]
     return None
 
 
