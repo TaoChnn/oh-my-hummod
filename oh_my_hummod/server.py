@@ -37,37 +37,64 @@ PROFILE_NAME = os.environ.get("HUMMOD_PROFILE", "")
 OUTDIR = os.environ.get("HUMMOD_OUTDIR", os.path.join(os.getcwd(), "mcp-exports"))
 
 server = MCPServer("hummod")
-_bridge: Bridge | None = None
-_profile: Profile | None = None
 
 
-def get_bridge() -> tuple[Bridge, Profile]:
-    global _bridge, _profile
-    if _bridge is not None and _bridge.main:
-        return _bridge, _profile
-    profile = None
-    if PROFILE_NAME:
-        profile = Profile.load(PROFILE_NAME)
+def _load_engines() -> dict[str, str]:
+    """Engine registry: key -> engine folder.
+
+    Sources (later wins): env HUMMOD_ENGINES (JSON), engines.json in the repo
+    root, and HUMMOD_ENGINE_DIR as the "default" entry.
+    """
+    engines: dict[str, str] = {}
+    for cand in (os.path.join(os.getcwd(), "engines.json"),
+                 os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engines.json")):
+        if os.path.exists(cand):
+            with open(cand, encoding="utf-8") as f:
+                engines.update(json.load(f))
+            break
+    raw = os.environ.get("HUMMOD_ENGINES")
+    if raw:
+        engines.update(json.loads(raw))
+    engines["default"] = ENGINE_DIR
+    return engines
+
+
+_ENGINES = _load_engines()
+_bridges: dict[str, tuple[Bridge, Profile]] = {}
+
+
+def _detect_profile(b: Bridge) -> Profile:
+    """Identify the engine build from its live top-level menu (discovery-first)."""
+    top = {c.label for c in b.menu_tree().children}
+    if "Startup" in top and "Clinic" in top:
+        return Profile.load("hummod_1.6.1")
+    if "Trauma" in top or "Sizing" in top:
+        return Profile.load("hummod_3.0.4")
+    if "Continue" in top or "View" in top:
+        return Profile.load("qcp_2005")
+    raise RuntimeError(f"cannot identify engine build; top-level menu: {sorted(t for t in top if t)}")
+
+
+def get_bridge(engine: str = "default") -> tuple[Bridge, Profile]:
+    if engine in _bridges and _bridges[engine][0].main:
+        return _bridges[engine]
+    if engine not in _ENGINES:
+        raise RuntimeError(f"unknown engine {engine!r}; known: {sorted(_ENGINES)}")
+    d = _ENGINES[engine]
+    if PROFILE_NAME and engine == "default":
+        p = Profile.load(PROFILE_NAME)
+        b = Bridge(d, exe_name=p.exe_names[0])
+        if not b.attach():
+            raise RuntimeError(f"engine {engine!r} not running; call hummod_start first")
+        p = p  # explicit override wins even if the menu disagrees
     else:
-        candidates = ["hummod_3.0.4", "hummod_1.6.1", "qcp_2005"]
-        for name in candidates:
-            p = Profile.load(name)
-            for exe in p.exe_names:
-                if os.path.exists(os.path.join(ENGINE_DIR, exe)):
-                    profile = p
-                    break
-            if profile:
-                break
-        if profile is None:
-            raise RuntimeError(
-                f"no engine EXE found in {ENGINE_DIR}; set HUMMOD_ENGINE_DIR / HUMMOD_PROFILE")
-    b = Bridge(ENGINE_DIR, exe_name=profile.exe_names[0])
-    if not b.attach():
-        raise RuntimeError(
-            f"engine process not running (looked for {profile.exe_names[0]} in {ENGINE_DIR}); "
-            "call hummod_start first")
-    _bridge, _profile = b, profile
-    return b, profile
+        b = Bridge(d)  # exe name discovered from the running process
+        if not b.attach():
+            raise RuntimeError(f"engine {engine!r} not running; call hummod_start first")
+        p = _detect_profile(b)
+    b.wait_ready(p.bind_marker)
+    _bridges[engine] = (b, p)
+    return b, p
 
 
 def safe(fn):
@@ -80,8 +107,8 @@ def safe(fn):
     return w
 
 
-def _navigate(panel_path: str) -> int:
-    b, _ = get_bridge()
+def _navigate(panel_path: str, engine: str = "default") -> int:
+    b, _ = get_bridge(engine)
     tree = b.menu_tree()
     node = tree.walk(panel_path)
     if node.cmd_id is None:
@@ -91,8 +118,8 @@ def _navigate(panel_path: str) -> int:
     return node.cmd_id
 
 
-def _wait_done(cap: float = 900.0) -> float:
-    b, p = get_bridge()
+def _wait_done(engine: str = "default", cap: float = 900.0) -> float:
+    b, p = get_bridge(engine)
     stop_id = p.stop_cmd_id
     if stop_id is None:  # discovery fallback: find the item labelled Stop
         stop_id = b.menu_tree().find("Stop").cmd_id
@@ -101,45 +128,54 @@ def _wait_done(cap: float = 900.0) -> float:
 
 @server.tool()
 @safe
-def hummod_status() -> str:
-    """Check whether the engine is running; returns profile, pid and engine dir."""
+def hummod_engines() -> str:
+    """List all registered engines (from engines.json) with running state and detected profile."""
+    out = {}
+    for key, d in _ENGINES.items():
+        entry: dict = {"dir": d}
+        try:
+            b, p = get_bridge(key)
+            entry.update({"running": True, "pid": b.pid, "profile": p.name})
+        except Exception as e:
+            entry.update({"running": False, "error": str(e)})
+        out[key] = entry
+    return json.dumps({"engines": out, "default": "default"})
+
+
+@server.tool()
+@safe
+def hummod_status(engine: str = "default") -> str:
+    """Check whether an engine is running; returns profile, pid and engine dir."""
     try:
-        b, p = get_bridge()
+        b, p = get_bridge(engine)
         return json.dumps({"running": True, "pid": b.pid, "profile": p.name,
-                           "engine_dir": ENGINE_DIR})
+                           "engine": engine, "engine_dir": _ENGINES[engine]})
     except Exception as e:
-        return json.dumps({"running": False, "error": str(e), "engine_dir": ENGINE_DIR})
+        return json.dumps({"running": False, "error": str(e),
+                           "engine": engine, "engine_dir": _ENGINES.get(engine)})
 
 
 @server.tool()
 @safe
-def hummod_start() -> str:
-    """Start the engine (hidden window) if not running."""
-    p = Profile.load(PROFILE_NAME) if PROFILE_NAME else Profile.load(_detect_profile())
-    b = Bridge(ENGINE_DIR, exe_name=p.exe_names[0])
-    if b.attach():
-        global _bridge, _profile
-        _bridge, _profile = b, p
-        return json.dumps({"ok": True, "pid": b.pid, "note": "already running"})
+def hummod_start(key: str = "default") -> str:
+    """Start an engine (hidden window) if not running. Key comes from engines.json."""
+    if key not in _ENGINES:
+        raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
+    if key in _bridges and _bridges[key][0].main:
+        return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
+    b = Bridge(_ENGINES[key])  # exe name discovered from the folder
     pid = b.start()
+    p = _detect_profile(b)
     b.wait_ready(p.bind_marker)
-    _bridge, _profile = b, p
-    return json.dumps({"ok": True, "pid": pid})
-
-
-def _detect_profile() -> str:
-    for name in ("hummod_3.0.4", "hummod_1.6.1", "qcp_2005"):
-        p = Profile.load(name)
-        if any(os.path.exists(os.path.join(ENGINE_DIR, exe)) for exe in p.exe_names):
-            return name
-    raise RuntimeError(f"no known engine EXE in {ENGINE_DIR}")
+    _bridges[key] = (b, p)
+    return json.dumps({"ok": True, "pid": pid, "profile": p.name})
 
 
 @server.tool()
 @safe
-def hummod_restart() -> str:
+def hummod_restart(engine: str = "default") -> str:
     """Reset the model to its initial state (label-discovered Restart command). Waits until settled."""
-    b, _ = get_bridge()
+    b, _ = get_bridge(engine)
     cmd = b.menu_tree().walk("Restart").cmd_id
     b.command(cmd)
     _wait_done(60)
@@ -148,9 +184,9 @@ def hummod_restart() -> str:
 
 @server.tool()
 @safe
-def hummod_inspect(max_chars: int = 20000) -> str:
+def hummod_inspect(max_chars: int = 20000, engine: str = "default") -> str:
     """Dump the engine's full menu tree (labels + command ids) and the current page's controls as JSON. Use it to find panel paths and control ordinals."""
-    b, p = get_bridge()
+    b, p = get_bridge(engine)
     menu = b.menu_tree()
 
     def ser(n):
@@ -167,23 +203,26 @@ def hummod_inspect(max_chars: int = 20000) -> str:
 
 @server.tool()
 @safe
-def hummod_navigate(panel_path: str) -> str:
+def hummod_navigate(panel_path: str, engine: str = "default") -> str:
     """Switch the engine to a panel page by menu path, e.g. 'Trauma/Hemorrhage' or 'Diagnosis/Chart'."""
-    mid = _navigate(panel_path)
+    mid = _navigate(panel_path, engine)
     return json.dumps({"ok": True, "navigated": panel_path, "menu_id": mid})
 
 
 @server.tool()
 @safe
-def hummod_go(duration_label: str) -> str:
+def hummod_go(duration_label: str, engine: str = "default") -> str:
     """Run the simulation for a Go-menu duration ('1 Min', '10 Min', 'To Next Hour', '1 Day', '30 Days', ...). Waits for completion (Stop grays) and returns wall seconds."""
-    b, _ = get_bridge()
-    node = b.menu_tree().walk("Go/" + duration_label)
+    b, _ = get_bridge(engine)
+    label = duration_label.strip()
+    if label.lower().startswith("go/"):
+        label = label.split("/", 1)[1]  # tolerate "Go/1 Min" as well as "1 Min"
+    node = b.menu_tree().walk("Go/" + label)
     if node.cmd_id is None:
-        raise RuntimeError(f"'{duration_label}' is not a runnable Go entry")
+        raise RuntimeError(f"'{label}' is not a runnable Go entry")
     t0 = time.time()
     b.command(node.cmd_id)
-    wall = _wait_done()
+    wall = _wait_done(engine)
     return json.dumps({"ok": True, "ran": duration_label,
                        "wall_seconds": round(time.time() - t0, 1),
                        "stop_poll_seconds": round(wall, 1)})
@@ -191,9 +230,9 @@ def hummod_go(duration_label: str) -> str:
 
 @server.tool()
 @safe
-def hummod_menu_command(item_path: str) -> str:
+def hummod_menu_command(item_path: str, engine: str = "default") -> str:
     """Press any menu entry by path, e.g. 'Restart', 'File/Save Initial Conditions', 'Go/5 Min' (does not wait; use hummod_go for durations)."""
-    b, _ = get_bridge()
+    b, _ = get_bridge(engine)
     node = b.menu_tree().walk(item_path)
     if node.cmd_id is None:
         raise RuntimeError(f"'{item_path}' has no command id (submenu)")
@@ -203,10 +242,10 @@ def hummod_menu_command(item_path: str) -> str:
 
 @server.tool()
 @safe
-def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | None = None, value: str | None = None) -> str:
+def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | None = None, value: str | None = None, engine: str = "default") -> str:
     """Click a radio button on a panel page. Prefer value='On'/'Off' (label semantics from the profile); or ordinal among radios sorted by control id (expected = total count guardrail)."""
-    b, p = get_bridge()
-    _navigate(panel_path)
+    b, p = get_bridge(engine)
+    _navigate(panel_path, engine)
     radios = sorted([c for c in b.controls() if c.is_radio], key=lambda c: c.ctrl_id)
     if expected is not None and len(radios) != expected:
         raise RuntimeError(f"radio count mismatch: found {len(radios)}, expected {expected}")
@@ -242,14 +281,14 @@ def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | No
 
 @server.tool()
 @safe
-def hummod_action(panel_path: str, ordinal: int, expected: int | None = None) -> str:
+def hummod_action(panel_path: str, ordinal: int, expected: int | None = None, engine: str = "default") -> str:
     """Click an action button on a panel page - the canvas triggers drawn as '!'
     buttons (e.g. CPR Draw Blood / Shock Now on Intervention/CPR and
     Trauma/Ventricular Fibrillation). Ordinal among action buttons sorted by
     control id; expected = total count (guardrail). Counts and meanings per
     panel live in profile radio_semantics/action notes."""
-    b, _ = get_bridge()
-    _navigate(panel_path)
+    b, _ = get_bridge(engine)
+    _navigate(panel_path, engine)
     actions = sorted([c for c in b.controls()
                       if c.cls == "Button" and c.text.strip() == "!"],
                      key=lambda c: c.ctrl_id)
@@ -265,10 +304,10 @@ def hummod_action(panel_path: str, ordinal: int, expected: int | None = None) ->
 
 @server.tool()
 @safe
-def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None = None) -> str:
+def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None = None, engine: str = "default") -> str:
     """Set an Edit (text) control on a panel page and click its apply button ("> button adjacent by control id). Ords per page from hummod_inspect; expected = total edit count (guardrail)."""
-    b, _ = get_bridge()
-    _navigate(panel_path)
+    b, _ = get_bridge(engine)
+    _navigate(panel_path, engine)
     edits = sorted([c for c in b.controls() if c.cls == "Edit"], key=lambda c: c.ctrl_id)
     if expected is not None and len(edits) != expected:
         raise RuntimeError(f"edit count mismatch: found {len(edits)}, expected {expected}")
@@ -290,10 +329,10 @@ def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None 
 
 @server.tool()
 @safe
-def hummod_slider(panel_path: str, ordinal: int, pos: int, expected: int) -> str:
+def hummod_slider(panel_path: str, ordinal: int, pos: int, expected: int, engine: str = "default") -> str:
     """Move a slider on a panel page. WARNING: some engines (3.0.4) accept the thumb move but do not commit the model value - verify via hummod_snapshot and prefer XML parm edits there."""
-    b, p = get_bridge()
-    _navigate(panel_path)
+    b, p = get_bridge(engine)
+    _navigate(panel_path, engine)
     sliders = sorted([c for c in b.controls() if c.cls == "ScrollBar"], key=lambda c: c.ctrl_id)
     if len(sliders) != expected:
         raise RuntimeError(f"slider count mismatch: found {len(sliders)}, expected {expected}")
@@ -313,9 +352,9 @@ def _parent_of(hwnd: int) -> int:
 
 @server.tool()
 @safe
-def hummod_snapshot(name: str, vars: list[str] | None = None) -> str:
+def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default") -> str:
     """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables. Returns path + values (System.X = sim time on HumMod)."""
-    b, p = get_bridge()
+    b, p = get_bridge(engine)
     os.makedirs(OUTDIR, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
     save_id = p.file.get("save_sol")
@@ -363,17 +402,17 @@ def hummod_history(sol_path: str, vars: list[str], max_points: int = 500) -> str
 
 @server.tool()
 @safe
-def hummod_dismiss_modal() -> str:
+def hummod_dismiss_modal(engine: str = "default") -> str:
     """Close any engine modal dialog (e.g. Tech window) that blocks automation."""
-    b, _ = get_bridge()
+    b, _ = get_bridge(engine)
     return json.dumps({"dismissed": [hex(h) for h in b.dismiss_modals()]})
 
 
 @server.tool()
 @safe
-def hummod_profile() -> str:
+def hummod_profile(engine: str = "default") -> str:
     """Return the active engine profile: file menu ids, stop semantics and quirks."""
-    _, p = get_bridge()
+    _, p = get_bridge(engine)
     return json.dumps({"name": p.name, "file": p.file, "stop_cmd_id": p.stop_cmd_id,
                        "quirks": p.quirks, "page_ids": p.page_ids})
 

@@ -13,6 +13,7 @@ Everything here is engine-agnostic; version differences live in profiles
 from __future__ import annotations
 
 import ctypes
+import os
 import re
 import subprocess
 import time
@@ -102,18 +103,23 @@ class MenuItem:
 class Bridge:
     """Attach to a running engine and drive it with window messages."""
 
-    def __init__(self, engine_dir: str, exe_name: str = "HumMod.EXE"):
+    def __init__(self, engine_dir: str, exe_name: str | None = None):
         self.engine_dir = engine_dir
-        self.exe_name = exe_name
+        self.exe_name = exe_name  # optional filter; discovered from the process if None
         self.pid: int | None = None
         self.main: int | None = None  # hwnd of the window that owns the menu bar
 
     # ---------- process attach ----------
 
     def attach(self) -> bool:
-        """Find the engine process by exe path and locate its menu window."""
-        target = self._engine_exe_path().lower()
-        found: list[tuple[int, int]] = []  # (pid, hwnd-with-menu)
+        """Find the engine process by its folder and locate its menu window.
+
+        When exe_name is set, only processes running that exact EXE match;
+        otherwise any EXE inside engine_dir matches (so builds like QCP's
+        'QCP 2005.EXE' are found without knowing the name up front).
+        """
+        target = os.path.abspath(self.engine_dir).lower()
+        found: list[tuple[int, int, str]] = []  # (pid, hwnd-with-menu, exe path)
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def on_window(hwnd, _l):
@@ -121,29 +127,43 @@ class Bridge:
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value:
                 path = self._process_exe_path(pid.value)
-                if path and path.lower() == target:
-                    if user32.GetMenu(hwnd):
-                        found.append((pid.value, hwnd))
+                if path:
+                    d = os.path.dirname(path).lower()
+                    name = os.path.basename(path)
+                    if d == target and (not self.exe_name or name.lower() == self.exe_name.lower()):
+                        if user32.GetMenu(hwnd):
+                            found.append((pid.value, hwnd, path))
             return True
 
         user32.EnumWindows(on_window, 0)
         if not found:
             return False
-        pids = {pid for pid, _ in found}
+        pids = {pid for pid, _, _ in found}
         if len(pids) != 1:
             raise RuntimeError(f"expected one engine process, found {sorted(pids)}")
-        self.pid, self.main = found[0]
+        self.pid, self.main, exe = found[0]
+        self.exe_name = os.path.basename(exe)
         return True
 
     def start(self, hidden: bool = True) -> int:
-        """Launch the engine EXE; return the new process pid."""
-        import os
+        """Launch the engine EXE; return the new process pid.
+
+        If exe_name was not given, the folder must contain exactly one .exe
+        (other builds like Modular AVP ship several and need an explicit name).
+        """
+        exe = self.exe_name
+        if not exe:
+            exes = [f for f in os.listdir(self.engine_dir) if f.lower().endswith(".exe")]
+            if len(exes) != 1:
+                raise RuntimeError(f"cannot pick an EXE in {self.engine_dir}: {exes}")
+            exe = exes[0]
+            self.exe_name = exe
         flags = 0x00000008  # DETACHED_PROCESS
         si = subprocess.STARTUPINFO()
         if hidden:
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = 0  # SW_HIDE
-        p = subprocess.Popen([self._engine_exe_path()], cwd=self.engine_dir,
+        p = subprocess.Popen([os.path.join(self.engine_dir, exe)], cwd=self.engine_dir,
                              creationflags=flags, startupinfo=si)
         deadline = time.time() + 20
         while time.time() < deadline:
@@ -153,8 +173,7 @@ class Bridge:
         raise RuntimeError("engine started but its window never appeared")
 
     def _engine_exe_path(self) -> str:
-        import os
-        return os.path.join(self.engine_dir, self.exe_name)
+        return os.path.join(self.engine_dir, self.exe_name or "")
 
     @staticmethod
     def _process_exe_path(pid: int) -> str | None:
