@@ -6,9 +6,40 @@ reverse engineering**. The engine cannot tell these messages from a user's
 mouse.
 
 ```
-MCP client ──stdio──> oh-my-hummod server ──Win32 messages──> engine EXE (3.0.4 / 1.6.1 / QCP 2005)
-                                └── parses .SOL exports (10,346 variables)
+MCP client ──stdio──> oh-my-hummod server ──Win32 messages──> engine EXE
+                                └── parses .SOL / .ICS exports (10,000+ variables)
 ```
+
+**Validated engines:** HumMod Clemmer Salt 3.0.4 ✅ · HumMod-BAT ✅ ·
+avphummod (Modular) ✅ · HumMod standalone 1.6.1 ✅ · QCP 2005 ✅ (core)
+
+## Quick start (fresh Windows machine)
+
+Requirements: **Windows 10/11**, **Python 3.10+**, and an engine folder
+(download HumMod/QCP from hummod.org or your course materials — this project
+ships no engine).
+
+```bat
+:: 1) get the code
+git clone https://github.com/TaoChnn/oh-my-hummod.git
+cd oh-my-hummod
+
+:: 2) install (pulls in the `mcp` package)
+pip install -e .
+
+:: 3) sanity check with your engine folder
+set HUMMOD_ENGINE_DIR=C:\HumMod
+python tests\engine_smoke.py --engine C:\HumMod --profile hummod_3.0.4
+::   expect: ENGINE_SMOKE_OK
+
+:: 4) register with your MCP client (see snippet below), restart the client,
+::    and the hummod_* tools appear in the tool list
+```
+
+The profile is auto-detected from the engine EXE in `HUMMOD_ENGINE_DIR`
+(`hummod_3.0.4` / `hummod_1.6.1` / `qcp_2005` / `hummod_bat` / `avphummod`).
+`tests\discover.py --engine C:\Some\Other\Build` prints everything needed to
+add a profile for an unknown build.
 
 ## Design: discovery first, profiles for the rest
 
@@ -22,17 +53,12 @@ be discovered:
 | `file` | File-menu command ids for the SOL/ICS save/load dialogs |
 | `dialog_edit_ids` | native file-dialog filename Edit control ids |
 | `stop_cmd_id` | completion semantics: grayed Stop = simulation finished |
+| `bind_marker` | top-level menu label that signals the model finished binding |
 | `radio_semantics` | unlabeled radio buttons (owner-drawn captions) → meaning |
 | `quirks` | engine behaviours that change tool behaviour (slider commit, EPO, model noise) |
 
-Adding a new engine version = run `hummod_inspect` against it, note the
+Adding a new engine version = run `tests/discover.py` against it, note the
 differences, drop a JSON in `profiles/`. No code changes.
-
-## Install & run
-
-```
-pip install -e .            # deps: mcp (pywin32 not required - pure ctypes)
-```
 
 Register with an MCP client (ZCode `~/.zcode/cli/config.json`):
 
