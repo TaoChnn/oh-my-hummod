@@ -1,0 +1,24 @@
+{
+  "name": "hummod_3.0.4",
+  "exe_names": ["HumMod.EXE"],
+  "file": { "load_ics": 1, "save_ics": 2, "load_sol": 3, "save_sol": 4, "exit": 5 },
+  "dialog_edit_ids": [1001, 1148],
+  "stop_cmd_id": 6,
+  "quirks": {
+    "slider_commits": false,
+    "slider_note": "THUMBPOSITION+ENDSCROLL moves the thumb but the model value does not commit; set initial conditions via model XML <parm> edits (GPL-2.0) and Restart.",
+    "epo_computed": false,
+    "epo_note": "EPO stays at its initial value on this build (known engine limitation).",
+    "model_noise": true,
+    "model_noise_note": "Random terms: repeated runs agree exactly at restart, then diverge within ~2.75% on noise-sensitive rates."
+  },
+  "page_ids": {
+    "Trauma/Hemorrhage": 741,
+    "Diagnosis/Chart": 635
+  },
+  "radio_semantics": {
+    "Trauma/Hemorrhage": { "off": 0, "on": 1, "type constant": 2, "type pressure": 3,
+                           "left switch off": 4, "left switch on": 5,
+                           "right switch off": 6, "right switch on": 7 }
+  }
+}

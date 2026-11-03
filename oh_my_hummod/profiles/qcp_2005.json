@@ -1,0 +1,12 @@
+{
+  "name": "qcp_2005",
+  "exe_names": ["QCP 2005.EXE"],
+  "file": { "load_ics": null, "save_ics": null, "load_sol": null, "save_sol": null, "exit": null },
+  "dialog_edit_ids": [],
+  "stop_cmd_id": null,
+  "quirks": {
+    "experimental": true,
+    "note": "QCP 2005 has a different UI framework; run discovery (inspect) against a live instance to fill menu ids, completion semantics and dialog controls. ICS case files ship alongside the EXE."
+  },
+  "page_ids": {}
+}

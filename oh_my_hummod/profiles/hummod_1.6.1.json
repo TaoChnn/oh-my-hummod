@@ -1,0 +1,12 @@
+{
+  "name": "hummod_1.6.1",
+  "exe_names": ["HumMod.EXE"],
+  "file": { "load_ics": 1, "save_ics": 2, "load_sol": 3, "save_sol": 4, "exit": 5 },
+  "dialog_edit_ids": [1001, 1148],
+  "stop_cmd_id": 6,
+  "quirks": {
+    "slider_commits": true,
+    "note": "Standalone 1.6.1: cannot reliably save/load ICS per the course handbook; Go menu ids match 3.0.4 (same code lineage)."
+  },
+  "page_ids": {}
+}

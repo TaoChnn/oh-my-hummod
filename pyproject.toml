@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oh-my-hummod"
+version = "0.1.0"
+description = "Oh My HumMod - drive HumMod / QCP physiology engines from MCP clients; multi-version, window messages only, no engine source required"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["mcp>=1.2"]
+
+[project.scripts]
+oh-my-hummod = "oh_my_hummod.server:main"
+
+[tool.setuptools.packages.find]
+include = ["oh_my_hummod*"]
+
+[tool.setuptools.package-data]
+oh_my_hummod = ["profiles/*.json"]
