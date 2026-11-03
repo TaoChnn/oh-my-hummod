@@ -4,9 +4,18 @@
   "file": { "load_ics": 1, "save_ics": 2, "load_sol": 3, "save_sol": 4, "exit": 5 },
   "dialog_edit_ids": [1001, 1148],
   "stop_cmd_id": 6,
+  "bind_marker": "Startup",
   "quirks": {
     "slider_commits": true,
-    "note": "Standalone 1.6.1: cannot reliably save/load ICS per the course handbook; Go menu ids match 3.0.4 (same code lineage)."
+    "radio_check_state": false,
+    "radio_check_note": "BM_GETCHECK returns 0 for the owner-drawn radios; state must be read from SOL exports.",
+    "navigate_retry": true,
+    "ics_note": "Handbook: 1.6.1 cannot reliably save/import ICS files; SOL save/load works.",
+    "crash_note": "Handbook: divide-by-zero crashes on some pathologies (cardiac arrest, apnea); avoid those pages."
   },
-  "page_ids": {}
+  "page_ids": { "Clinic/Hemorrhage": 532 },
+  "radio_semantics": {
+    "Clinic/Hemorrhage": { "off": 0, "on": 1 }
+  },
+  "panels": { "hemorrhage": "Clinic/Hemorrhage" }
 }

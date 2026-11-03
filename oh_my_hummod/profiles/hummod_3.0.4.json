@@ -1,8 +1,19 @@
 {
   "name": "hummod_3.0.4",
-  "exe_names": ["HumMod.EXE"],
-  "file": { "load_ics": 1, "save_ics": 2, "load_sol": 3, "save_sol": 4, "exit": 5 },
-  "dialog_edit_ids": [1001, 1148],
+  "exe_names": [
+    "HumMod.EXE"
+  ],
+  "file": {
+    "load_ics": 1,
+    "save_ics": 2,
+    "load_sol": 3,
+    "save_sol": 4,
+    "exit": 5
+  },
+  "dialog_edit_ids": [
+    1001,
+    1148
+  ],
   "stop_cmd_id": 6,
   "quirks": {
     "slider_commits": false,
@@ -17,8 +28,16 @@
     "Diagnosis/Chart": 635
   },
   "radio_semantics": {
-    "Trauma/Hemorrhage": { "off": 0, "on": 1, "type constant": 2, "type pressure": 3,
-                           "left switch off": 4, "left switch on": 5,
-                           "right switch off": 6, "right switch on": 7 }
-  }
+    "Trauma/Hemorrhage": {
+      "off": 0,
+      "on": 1,
+      "type constant": 2,
+      "type pressure": 3,
+      "left switch off": 4,
+      "left switch on": 5,
+      "right switch off": 6,
+      "right switch on": 7
+    }
+  },
+  "bind_marker": "Sizing"
 }

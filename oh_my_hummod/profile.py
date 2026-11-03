@@ -23,9 +23,11 @@ class Profile:
     file: dict            # {"load_ics": id, "save_ics": id, "load_sol": id|None, "save_sol": id, "exit": id}
     dialog_edit_ids: list[int]
     stop_cmd_id: int
+    bind_marker: str = "Sizing"   # top-level menu label that appears once the model is bound
     quirks: dict = field(default_factory=dict)
     page_ids: dict = field(default_factory=dict)   # optional curated panel path -> cmd id
     radio_semantics: dict = field(default_factory=dict)  # panel path -> {"on": ordinal, "off": ordinal, ...}
+    panels: dict = field(default_factory=dict)     # version-specific panel paths for tests/demos
 
     @classmethod
     def load(cls, path_or_name: str) -> "Profile":

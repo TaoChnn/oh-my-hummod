@@ -122,7 +122,7 @@ def hummod_start() -> str:
         _bridge, _profile = b, p
         return json.dumps({"ok": True, "pid": b.pid, "note": "already running"})
     pid = b.start()
-    b.wait_ready()
+    b.wait_ready(p.bind_marker)
     _bridge, _profile = b, p
     return json.dumps({"ok": True, "pid": pid})
 

@@ -282,14 +282,21 @@ class Bridge:
             raise RuntimeError("command delivery failed")
 
     def navigate(self, page_cmd_id: int, timeout: float = 30.0) -> None:
-        """Switch model page (menu command) and wait for the page to load."""
+        """Switch model page (menu command) and wait for the page to load.
+
+        Older engines may accept the command only after their page handlers
+        finish binding, so a timeout here is retried rather than fatal.
+        """
         if not user32.IsWindowEnabled(self.main):
             raise RuntimeError("engine has an open modal dialog")
         res = ctypes.c_size_t()
-        if user32.SendMessageTimeoutW(self.main, WM_COMMAND, page_cmd_id, 0,
-                                      0x0002, int(timeout * 1000),
-                                      ctypes.byref(res)) == 0:
-            raise RuntimeError("page did not finish loading")
+        for attempt in range(3):
+            if user32.SendMessageTimeoutW(self.main, WM_COMMAND, page_cmd_id, 0,
+                                          0x0002, int(timeout * 1000),
+                                          ctypes.byref(res)) != 0:
+                return
+            time.sleep(2.0)
+        raise RuntimeError("page did not finish loading")
 
     def press(self, hwnd: int) -> None:
         user32.PostMessageW(hwnd, BM_CLICK, 0, 0)
