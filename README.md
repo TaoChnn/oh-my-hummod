@@ -96,11 +96,18 @@ agents can self-correct.
 
 ## Validated profiles
 
-| Engine | Status |
-|---|---|
-| HumMod Clemmer Salt **3.0.4** | ✅ full protocol driven end-to-end (hemorrhage 4.3.1, five time points) |
-| HumMod standalone **1.6.1** | profile drafted, validation pending (menu ids confirmed identical - same code lineage) |
-| **QCP 2005** | experimental stub - different UI framework, needs a discovery pass |
+| Engine build | Profile | Status |
+|---|---|---|
+| HumMod Clemmer Salt **3.0.4** | `hummod_3.0.4` | ✅ full protocol end-to-end (hemorrhage 4.3.1, five time points, SOL-verified) |
+| **HumMod-BAT** (2018 custom build) | `hummod_bat` | ✅ engine_smoke passed - menu skeleton identical to 3.0.4, profile reuses it |
+| **avphummod** (Modular AVP build) | `avphummod` | ✅ engine_smoke passed - same lineage; ships Model Solver.exe + ScriptedController.exe |
+| HumMod standalone **1.6.1** | `hummod_1.6.1` | ✅ engine_smoke passed (Clinic/Hemorrhage, SOL-verified radio toggle, Go 1 Min) |
+| **QCP 2005** | `qcp_2005` | ✅ core validated over MCP (navigate View pages, Go with two-phase stop semantics, ICS snapshots); hemorrhage lives on the Clinical-Buttons canvas and is not yet mapped |
+
+Same-lineage builds (the whole 3.x custom family) share the 3.0.4 menu
+skeleton and cost **zero code** to add - a thin profile JSON at most.
+Heterogeneous engines (1.6.1, QCP) need one profile each. To qualify an
+unknown build, run `python tests/discover.py --engine C:\path\to\build`.
 
 ## Tests
 
@@ -108,8 +115,10 @@ With an engine running:
 
 ```
 set HUMMOD_ENGINE_DIR=C:\path\to\engine
-python tests\smoke.py       # bridge-level: attach, menus, radio, SOL export
-python tests\mcp_smoke.py   # MCP-protocol level: tools over stdio
+python tests\engine_smoke.py --engine C:\path\to\engine --profile hummod_3.0.4
+                             # full: attach, binding, menus, radio (SOL-verified), run
+python tests\mcp_smoke.py    # MCP-protocol level: tools over stdio
+python tests\test_solver.py  # parser unit tests (fixtures included, no engine needed)
 ```
 
 ## Licensing
