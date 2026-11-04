@@ -529,11 +529,16 @@ def hummod_busy(engine: str = "default") -> str:
     if stop_id is None:
         stop_id = b.menu_tree().find("Stop").cmd_id
     responsive = b.ui_responsive(500)
+    stop_enabled = bool(b.menu_item_enabled(stop_id))
+    text = b.status_text() or ""
+    # 3.0.4 field trial: the UI thread stays responsive while the model runs,
+    # so "not responsive" alone misses whole runs - weight the other signals.
+    solving = "solving" in text.lower() and "done" not in text.lower()
     return json.dumps({"ok": True,
-                       "busy": not responsive,
+                       "busy": (not responsive) or solving or stop_enabled,
                        "ui_responsive": responsive,
-                       "stop_enabled": bool(b.menu_item_enabled(stop_id)),
-                       "status_text": b.status_text()})
+                       "stop_enabled": stop_enabled,
+                       "status_text": text})
 
 
 def _sim_time(b: Bridge, p: Profile) -> float | None:
