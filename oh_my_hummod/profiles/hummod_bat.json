@@ -17,17 +17,39 @@
   "stop_cmd_id": 6,
   "bind_marker": "Sizing",
   "quirks": {
-    "lineage": "Menu skeleton identical to hummod_3.0.4 (Stop=6, Go 12-30, Trauma/Hemorrhage=741); verified by engine_smoke with the 3.0.4 profile.",
-    "slider_commits": false,
-    "model_noise": true
+    "lineage": "Menu skeleton identical to hummod_3.0.4 (Stop=6, Go 12-30, Trauma/Hemorrhage=741); verified by engine_smoke with the 3.0.4 profile. Full Daily-Planner aerobics experiment (manual 3.4) completed 2026-11-05 via the 3.0.4 profile with zero code changes.",
+    "slider_commits": "partial",
+    "slider_note": "DailyPlanner/Control Aerobics Level slider commits (ctrl 9836, ordinal 2; raw pos x 10 = Watts, 30 reps; pos 5 -> 50 W verified via snapshot). Aerobics Duration = ordinal 3 (12 reps x 5 min, default 30). Verify every slider via snapshot; some other sliders on this build do not commit.",
+    "model_noise": true,
+    "options_dialog": "Options menu (id 8) opens modal 'HumMod - Options' (Reset | Restart tab). UPPER Apply id=10 'Reset the model and solver to their original states' = factory reset: revives dead subjects AND reverts UI settings to XML factory values. LOWER Apply id=20 'Move current values to initial conditions' = Reset-Keep: clock -> 0, ALL current values (UI settings AND current physiology, including a corpse state) become the new ICs; does NOT revive. Apply buttons keep the dialog open; press via hummod_dismiss_modal(prefer=id), close via 关闭 id=1. Menu Restart (id 7) re-reads the last-established ICs (factory XML ICs on a fresh process).",
+    "daily_planner": "Panels: Lifestyle/Daily Planner/Schedule (id 624) = 24 rows x 5 radios (Sleep/Rest/Work/Aerobics/Eat Meal = values 0-4, left to right); Aerobics radio of hour h (0-based, 12AM-1AM = h=0) = ordinal 5*h+3 among 120 radios. Lifestyle/Daily Planner/Control (id 623): Switch radio ordinals 0=Off/1=Start Now/2=Start At Midnight; AerobicsLevel default 100 W; AerobicsDuration default 30 min. Probe vars: DailyPlannerSchedule.Hour12AM-1AM ... Hour11PM-12AM, DailyPlannerControl.Switch/Status/Task, Status.Exertion/Activity/Posture/Nutrition.",
+    "heat_pinned": "This build pins core and skeletal-muscle temperature: HeatCore and HeatSkeletalMuscle define Change = Gain-Loss then override <def> Change = 0, and define Temp(K)=Mass/(...) then override Temp(K)=310/310.15. HeatCore.Temp(C) stays exactly 37.0, SweatGland.H2ORate stays 0 even at 227 W total exercise watts; total body water falls only ~30-50 mL/h (insensible+urine). Aerobic-exercise deaths on BAT are muscle-acidosis -> skeletal+respiratory muscle failure -> circulatory collapse (autopsy Dehydration=0), NOT water loss.",
+    "planner_aerobics_no_wrapup": "Exercise-Control.Wrapup exits immediately when Request == NO_EXERCISE (0); Daily-Planner aerobics never sets Exercise-Control.Request, so the exhaustion auto-stop (muscle pH <= Motivation 6.65, muscle/resp failure, coma) does NOT fire for planner-driven aerobics. Bouts end only by AerobicsDuration timer; the subject keeps exercising every hour until the acidosis death cascade (on 50 W/30-min bouts: pH crosses 6.65 in bout 4 ~t=205 min, death ~210-215 min).",
+    "death_handler": "On death the engine forces DailyPlannerControl Switch->0 and Status->0 (planner radio shows Off after death). Agonal state: MAP ~8-10, CO 0, HR 160-200, SkeletalMuscle-Ph.Ph ~4.15, Brain-Function.Effect ~0, Autopsy-Examination.IsDead=1.",
+    "six_hour_go": "Go 6 Hours takes ~100-170 s wall solving (vs ~3-4 s per 1 Hour step) and the subject still dies (DPAerobics reaches 50 at end; last bout had 1.9 min left at t=360) - the manual's 'engine ignores aerobics in the second half' recovery does NOT happen on BAT. One observed run CRASHED the engine process (CPU frozen ~164 s then process gone); an identical retry completed - crash is non-deterministic. Restart engine + reconfigure after a crash; UI-set parms are memory-only and lost.",
+    "bind_transient": "Right after hummod_start, page navigation/radio can fail once with 'page did not finish loading' while the model binds; retry succeeds.",
+    "epo_computed": false,
+    "status_bar_progress": "While solving, the status bar shows 'Solving ...' then '... Done'; on this build the Stop menu item becomes ENABLED during the run. hummod_busy may report busy=false mid-run because the UI thread stays responsive - trust the status text."
   },
   "page_ids": {
-    "Trauma/Hemorrhage": 741
+    "Trauma/Hemorrhage": 741,
+    "Diagnosis/Chart": 635,
+    "Lifestyle/Daily Planner/Schedule": 624,
+    "Lifestyle/Daily Planner/Control": 623
   },
   "radio_semantics": {
     "Trauma/Hemorrhage": {
       "off": 0,
       "on": 1
+    },
+    "Lifestyle/Daily Planner/Schedule": {
+      "row_stride": 5,
+      "values": "Sleep=0 Rest=1 Work=2 Aerobics=3 EatMeal=4 (column order); Aerobics of hour h = ordinal 5*h+3"
+    },
+    "Lifestyle/Daily Planner/Control": {
+      "off": 0,
+      "start_now": 1,
+      "start_at_midnight": 2
     }
   },
   "panels": {},
