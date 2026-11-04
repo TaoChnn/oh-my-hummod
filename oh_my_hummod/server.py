@@ -908,9 +908,14 @@ def hummod_action(panel_path: str, ordinal: int, expected: int | None = None, en
     buttons (e.g. CPR Draw Blood / Shock Now on Intervention/CPR and
     Trauma/Ventricular Fibrillation). Ordinal among action buttons sorted by
     control id; expected = total count (guardrail). Counts and meanings per
-    panel live in profile radio_semantics/action notes."""
+    panel live in profile radio_semantics/action notes.
+
+    panel_path='current' skips menu navigation and presses on whichever page
+    the engine currently shows - needed for Find-dialog pages that are not in
+    the menu tree (e.g. QCP's treadmill Exercise page)."""
     b, _ = get_bridge(engine)
-    _navigate(panel_path, engine)
+    if panel_path.strip().lower() not in ("", ".", "current"):
+        _navigate(panel_path, engine)
     actions = sorted([c for c in b.controls()
                       if c.cls == "Button" and c.text.strip() == "!"],
                      key=lambda c: c.ctrl_id)

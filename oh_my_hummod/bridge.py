@@ -405,6 +405,29 @@ class Bridge:
             raise RuntimeError("text update timed out")
 
     @staticmethod
+    def _pick_dialog_edit(kids: list, edit_ids: tuple[int, ...]):
+        """Choose the filename Edit on a native file dialog.
+
+        The profile's dialog_edit_ids work for most builds, but dialog layouts
+        differ between the Save and Open variants (QCP 2005: Save filename =
+        id 1001, Open filename = id 1148, while id 1001 on Open is the
+        Explorer *address* toolbar, not an Edit). Strategy:
+          1. visible Edit children whose ctrl_id is in profile edit_ids;
+          2. the standard Vista IFileDialog filename edit id 1148;
+          3. any visible Edit child (skipping the Explorer address edit 41477).
+        """
+        def visible_edits():
+            return [k for k in kids if k.cls == "Edit" and k.visible]
+        edits = [k for k in visible_edits() if k.ctrl_id in edit_ids]
+        if edits:
+            return edits[0]
+        standard = [k for k in visible_edits() if k.ctrl_id == 1148]
+        if standard:
+            return standard[0]
+        rest = [k for k in visible_edits() if k.ctrl_id != 41477]
+        return rest[0] if rest else None
+
+    @staticmethod
     def _scroll_pos(ctrl_hwnd: int) -> int | None:
         return user32.GetScrollPos(ctrl_hwnd, 0)
 
@@ -732,6 +755,9 @@ class Bridge:
 
         method='message' posts WM_LBUTTON*/WM_RBUTTON* to the window, which
         works for owner-drawn canvases without moving the physical mouse.
+        method='post' queues the same messages (PostMessage) - QCP 2005's
+        canvas hit-testing ignores *sent* mouse messages (their GetMessagePos
+        context is stale) but reacts to queued ones.
         method='mouse' moves the real cursor (needs a foreground window).
         """
         ox, oy = self.client_origin()
@@ -746,6 +772,16 @@ class Bridge:
             user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
             time.sleep(0.05)
             user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+        elif method == "post":
+            self.ensure_ready()
+            user32.PostMessageW(self.main, WM_MOUSEMOVE, 0, lparam)
+            time.sleep(0.02)
+            user32.PostMessageW(self.main, down, wparam, lparam)
+            time.sleep(0.05)
+            user32.PostMessageW(self.main, up, 0, lparam)
+            if double:
+                user32.PostMessageW(self.main, WM_LBUTTONDBLCLK, wparam, lparam)
+            time.sleep(0.3)
         else:
             self.ensure_ready()
             user32.SendMessageW(self.main, WM_MOUSEMOVE, 0, lparam)
@@ -995,10 +1031,10 @@ class Bridge:
             if len(dialogs) == 1:
                 dlg = dialogs[0]
                 kids = self._dialog_children(dlg)
-                edits = [k for k in kids if k.cls == "Edit" and k.ctrl_id in edit_ids and k.visible]
                 buttons = [k for k in kids if k.cls == "Button" and k.ctrl_id == 1 and k.visible and k.enabled]
-                if len(edits) == 1 and len(buttons) == 1:
-                    edit, button = edits[0], buttons[0]
+                edit = self._pick_dialog_edit(kids, edit_ids)
+                if edit is not None and len(buttons) == 1:
+                    button = buttons[0]
                     break
             time.sleep(0.05)
         if edit is None or button is None:
@@ -1057,10 +1093,10 @@ class Bridge:
             if len(dialogs) == 1:
                 dlg = dialogs[0]
                 kids = self._dialog_children(dlg)
-                edits = [k for k in kids if k.cls == "Edit" and k.ctrl_id in edit_ids and k.visible]
                 buttons = [k for k in kids if k.cls == "Button" and k.ctrl_id == 1 and k.visible and k.enabled]
-                if len(edits) == 1 and len(buttons) == 1:
-                    edit, button = edits[0], buttons[0]
+                edit = self._pick_dialog_edit(kids, edit_ids)
+                if edit is not None and len(buttons) == 1:
+                    edit, button = edit, buttons[0]
                     break
             time.sleep(0.05)
         if edit is None or button is None:

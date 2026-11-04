@@ -36,7 +36,11 @@
     "go_step_is_solver_step": "The Go duration IS the solver solution interval: a 30-min Go writes SOLNINT=30/DISPINT=2/DX=2 into the ICS, a 10-min Go writes SOLNINT=10/DISPINT=0.5/DX=0.5. Same-protocol reruns reproduce bit-for-bit, but changing the step length also changes the RANDOM/NORMAL noise sequence; observed 90-min endpoint differences between 30-min and 10-min step protocols stayed <=~2% on core pools (glucose/insulin mass), so event timing (coma, CV collapse) is step-length insensitive on this stiff model - step-length effects show through SAMPLING density, not dynamics.",
     "slider_pos0_verified": "SB_LINELEFT fallback for pos 0 verified on the Infusion Pumps insulin rate slider (Setting 1000->0 and 20->0, both committed exactly).",
     "consciousness_note": "No dedicated consciousness variable; 'Posture Control, Recent Coma' (ICS) latches to 1 after a faint and never resets - combine with Monitor page vitals (RR/HR/BP/Temp); death = Heart Rate 0 + ECG Flat + all Tissue Glucose Use 0.",
-    "pump_note": "Insulin pump lives on Infusion Pumps (117) AND as a pump box on the Insulin page (357). Verify interventions via ICS vars 'Insulin Pump, Setting' (rate, mU/min) / 'Insulin Pump, Switch' (0/1); infusion stops on Switch=0 while Setting is retained."
+    "pump_note": "Insulin pump lives on Infusion Pumps (117) AND as a pump box on the Insulin page (357). Verify interventions via ICS vars 'Insulin Pump, Setting' (rate, mU/min) / 'Insulin Pump, Switch' (0/1); infusion stops on Switch=0 while Setting is retained.",
+    "canvas_click_deaf": "Canvas-drawn widgets (Posture list, Treadmill Type/Run radios, Planner schedule rows, drawn page '!' triggers) do NOT respond to synthetic mouse clicks: SendMessage (hummod_click default), PostMessage (method='post'), and real-mouse (blocked by the LockApp lock-screen backstop in this environment) all fail. Right-clicking the canvas opens a modal TrackPopupMenu that blocks the sending call forever (hummod_click hang); PostMessage WM_CANCELMODE to the main window unwedges it but the engine process may then EXIT (observed crash). Drive such state via Win32 radios/sliders or ICS save-edit-load instead.",
+    "ics_loader_protected": "Load ICs silently resets some control-state vars to defaults regardless of file content: 'Exercise, Goal'->0, 'Exercise, Is On Treadmill'->0, 'Treadmill, Speed (MPH)'->5.0. 'Treadmill, Run Or Walk' DOES load (=1 verified). 'Posture Control, Default Posture' loads (1=Lying, 2=Sitting, 3=Standing, 4=Tilting; Result/Is-* follow after a solve step).",
+    "planner_exercise_route": "The only fully programmable exercise channel: Daily Planner/Control (69) Switch radios (Win32 1199 Off/1200 On) + its Win32 'Work Level' slider + the built-in schedule (8-11 AM = Work by default). Advancing the clock to 8 AM starts Working automatically: 'Exercise, Using Daily Planner'->1, Goal->3, Is Working->1, subject stands. Work intensity = 'Daily Planner, Work Level' (slider pos x10, cap 150). Is Working stays 1 with Level=0 while the scheduled hour runs (intensity 0 = rest). 'Exercise, Goal' enums seen: 0 resting, 3 working.",
+    "o2_intervention": "Air Supply (80): Gas Tanks Switch radios (Win32; sorted-by-id ordinals 0/1 = Pressure Chamber Off/On ids 1075/1076, 2/3 = Gas Tanks Off/On ids 1077/1078 - id order is NOT visual order). [O2]/[N2] valve sliders are linear (pos = percent). Inspired O2% = O2valve/(O2valve+N2valve); N2 valve floor is 19% (pos 0 -> 19) so max inspired O2 is 84% (639 mmHg), not 100%. Inspired air updates only after a solve step."
   },
   "page_ids": {
     "View/Clinical Buttons": 46,
@@ -72,9 +76,27 @@
     "Glucose": 378,
     "Triglycerides": 389,
     "Infusion Pumps": 117,
-    "Misc. Treatments": 131
+    "Misc. Treatments": 131,
+    "Oxygen": 254,
+    "Lactate": 275,
+    "Water": 242,
+    "pH": 270,
+    "Osmolarity": 408,
+    "Body Composition": 424,
+    "Structure / Function": 430,
+    "Cell Composition": 431
   },
   "slider_maps": {
+    "Daily Planner/Control": {
+      "note": "5 Win32 scrollbars, all ctrl_id 0; ordinal = z-order = 0 Meals Duration, 1 Aerobics Duration, 2 Aerobics Level, 3 Work Duration, 4 Work Level",
+      "work_level": "pos 0-15 -> value = pos*10 (0/50/100/150...), pos >=15 caps at 150 (the model's max sustained work rate); verify via 'Daily Planner, Work Level'"
+    },
+    "Air Supply": {
+      "note": "6 Win32 scrollbars, all ctrl_id 0; ordinal = z-order; visual rows top->bottom: [O2] 172, [N2] 191, [CO2] 210, CO PPM ~249, Anesthetic ~268, chamber Atm ~342 -> ordinals 5,4,3,2,1,0",
+      "o2_valve": "ordinal 5, pos = percent (pos 5 -> 5%)",
+      "n2_valve": "ordinal 4, pos 0 -> 19% floor (not 0)",
+      "inspired_o2": "inspired O2% = O2valve/(O2valve+N2valve); with O2=100, N2=19 -> 84% (639 mmHg)"
+    },
     "Diet": {
       "ordinal_to_control": "0=H2O, 1=SO4-, 2=PO4-, 3=K+, 4=Extra Cl-, 5=Extra Na+, 6=Table Salt, 7=Protein, 8=Fat, 9=Carbo's (sliders sorted by ctrl_id, all 0 -> z-order, descending y)",
       "table_salt_mmol_day": "pos 0-10 -> value=pos; pos 11-27 -> 10+10*(pos-10); pos 28-43 -> 180+20*(pos-27); max 500 at pos 43",
@@ -89,6 +111,7 @@
   },
   "radio_semantics": {
     "Control": {"off": 0, "on": 1, "note": "Daily Planner Switch radios have readable captions (Off id 1199 / On id 1200); ordinal order = ctrl_id order"},
+    "Air Supply": {"pressure chamber off": 0, "pressure chamber on": 1, "gas tanks off": 2, "gas tanks on": 3, "note": "ids 1075/1076 = Pressure Chamber (visual y~322), 1077/1078 = Gas Tanks (y~153); id order is NOT visual order; verify via inspired-air shot after a solve step"},
     "Infusion Pumps": {"off": 0, "on": 1, "note": "11 Off/On pairs (ids 1016-1037), ascending id = right column bottom->top then left column bottom->top; Insulin pair = ordinals 0 (Off, id 1016) / 1 (On, id 1017). Native check states are unreliable on QCP - always probe with ['Insulin Pump, Switch', 'Insulin Pump, Setting']."}
   },
   "panels": {}
