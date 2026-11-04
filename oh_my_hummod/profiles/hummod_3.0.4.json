@@ -25,7 +25,9 @@
     "exercise_exhaustion": "Exercise-Control 'Wrapup' stops the subject automatically (Request->0) when SkeletalMuscle-Ph.Ph <= Exercise-Motivation.Motivation (6.65), SkeletalMuscle/RespiratoryMuscle Function.Failed, or Brain-Function Comatose/Impaired. Duration/distance: Exercise-Treadmill.ElapsedTime (Min) / Distance(Miles).",
     "viscosity_clamp_flaky": "The Body Fluids/Blood/Viscosity Clamp radio sometimes gets reverted by the engine at the next Go run after being pressed while idle (observed once). Re-press and verify Viscosity.Clamp via snapshot before starting long runs.",
     "ics_dialog": "File>Save/Load Initial Conditions opens the Vista IFileDialog (title '另存为'/'打开'): filename Edit id 1001, Save/Open button id 1, Cancel id 2; the address bar remembers the last-used directory (the MCP OUTDIR after any hummod_snapshot). hummod_save_ics / hummod_load_ics (added 2026-11, branch field/hummod-anemia) drive it with an explicit path.",
-    "status_bar_progress": "While solving, the status bar shows 'Solving ...' then '... Done'; on this build the Stop menu item becomes ENABLED during the run (contrary to older notes). hummod_busy may report busy=false mid-run because the UI thread stays responsive - trust the status text."
+    "status_bar_progress": "While solving, the status bar shows 'Solving ...' then '... Done'; on this build the Stop menu item becomes ENABLED during the run (contrary to older notes). hummod_busy may report busy=false mid-run because the UI thread stays responsive - trust the status text.",
+    "ecg_no_modal": "3.0.4 does NOT raise the ECG state-change MessageBox ('The ECG shows V-Fib! Continue?') that 1.6.1 does - VFib induction/conversion needs no hummod_dismiss_modal; the ECG state is visible as text on Diagnosis/Chart ('ECG = V-Fib' / 'ECG = Flat').",
+    "vfib_physiology": "VFib onset zeroes Heart-Rate.Rate and CardiacOutput.Flow instantly while SANode-Rate.Rate races to 195 (sympathetic surge); MAP decays to a ~22 mmHg residual with SBP=DBP; RespiratoryCenter-Output.Rate hits 0 within 1 min; Brain-Flow/Function 0 by 1 min; LeftHeart-Function.Effect decays ~0.43/min at first (1.09 -> 0.43 in 2 min), slower later. Chart page shows '- Your patient is not responding. -'."
   },
   "page_ids": {
     "Trauma/Hemorrhage": 741,
@@ -88,7 +90,10 @@
   },
   "action_semantics": {
     "Trauma/Ventricular Fibrillation": {
-      "0": "Shock Now (defibrillate, 100 J = 0.8 x LeftHeart-Function.Effect). MUST be clicked while the simulation is RUNNING - idle clicks are ignored. Success = Heart-VFib.Is_Fibrillating flips to 0 (verify via snapshot); Heart-Defibrillator.TotalShocks does NOT increment reliably. Shocks at the same sim-time step share one random draw - advance time before retrying."
+      "0": "Shock Now (defibrillate, 100 J = 0.8 x LeftHeart-Function.Effect). Works clicked while the simulation is RUNNING and while IDLE (2026-11-05 vfib trial: an idle click on the displayed page executed ShockNow synchronously - TotalShocks incremented and Probability/NewHeartbeat refreshed at unchanged X; supersedes the older 'idle clicks are ignored' note). TotalShocks incremented 5/5 times in that trial. Success = Heart-VFib.Is_Fibrillating flips to 0 (verify via snapshot). Sustainability rule (Heart-VFib.DES TestStart): after a converted beat the wrapup re-fibrillates immediately when LeftHeart-Function.Effect < 0.30, so shocks landed below that threshold convert electrically but always re-fib (observed at Effect 0.282/0.245); 0.325 held. Unsustainably-fibrillating heart degenerates VFib -> ECG Flat/asystole within ~5 min, and shocks on asystole do nothing. P = Effect x 0.8; Joules_Probability curve caps at 100 J so raising Joules does not raise P. Advance sim time (e.g. Go 10 Sec) between retries to draw a fresh System.Random - same-step outcomes in identical restart runs matched (fail/fail), then diverged (success vs fail) as model noise decoupled the draws."
+    },
+    "Intervention/Defibrillator": {
+      "0": "Shock Now - same model action as the '!' trigger on Trauma/Ventricular Fibrillation; page also carries the Heart-Defibrillator.Joules slider (slider commit on 3.0.4 unverified)."
     },
     "Trauma/Hemorrhage": {
       "0": "Reset Volume"
