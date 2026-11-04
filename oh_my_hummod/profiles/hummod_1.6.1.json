@@ -15,7 +15,11 @@
     "version_note": "Ships a VERSION file (VERSION=\"1.6.1\"); server profile detection reads it first because the live top-level menu populates progressively during startup and can misdetect the build (seen: 1.6.1 detected as 3.0.4).",
     "message_no_modal": "Model <message> events (e.g. exercise auto-stop: 'I can't exercise any more...') do not open blocking Win32 dialogs; detect them via model vars (Exercise-Control.Request -> 0, Brain-Function.Impaired = 1). Death by anoxia also raises no 'Continue?' dialog.",
     "shot_hidden_black": "The engine is started hidden (SW_HIDE) and its window never paints, so hummod_shot returns all-black PNGs; read values from SOL snapshots instead.",
-    "repeatlist_firstval_zero": "Parameter slider lists start at 0 unless <firstval> is given: Ventilator.Rate pos==value (1/min), Ventilator.TidalVolume pos*10 (mL), Exercise-Bike.Power(W) pos*50 (W, 0-350; 150 = 'Moderate')."
+    "repeatlist_firstval_zero": "Parameter slider lists start at 0 unless <firstval> is given: Ventilator.Rate pos==value (1/min), Ventilator.TidalVolume pos*10 (mL), Exercise-Bike.Power(W) pos*50 (W, 0-350; 150 = 'Moderate').",
+    "go_to_next_semantics": "Verified live in the 4.3.1 hemorrhage run: 'To Next Hour'/'To Next Day'/'To Next 30 Days' advance to the next integer multiple of the unit (from X=10 -> 60, from 60 -> 1440, from 1440 -> 43200 min); all landed exactly on the protocol timepoints (checked via System.X).",
+    "clinic_hemorrhage_rate_slider": "Clinic/Hemorrhage 'Target Rate' slider (ScrollBar ctrl_id 15140, listname Hemorrhage.TargetRate, repeatlist 100 reps x stepsize 1.0): pos == mL/Min, so pos 100 = 100 mL/Min. Commits via THUMBPOSITION+ENDSCROLL (verified Hemorrhage.TargetRate = 100.0 after hummod_slider).",
+    "clinic_hemorrhage_controls": "Clinic/Hemorrhage page: 2 radios (ordinal 0 = Switch Off, 1 = Switch On, ctrl ids 15113/15115), 1 slider (15140), 1 action button ('Reset Volume', id 15136). Radio/slider changes on this page raised no application-modal MessageBox during the 4.3.1 run.",
+    "var_name_diffs_vs_304": "Model variable names differ from 3.0.4: sympathetic level = SympsCNS.NA(Hz) / GangliaGeneral.NA(Hz) (no Ganglia-Sympathetic.level), cardiac ganglion variable does not exist (GangliaGeneral.NA(Hz) is the closest), aldosterone = AldoPool.[Aldo(nG/dL)] (not MineralocorticoidReceptor.[Aldo(nG/dL)-Plasma]). EPOPool.[EPO] is live-computed in 1.6.1 (frozen in 3.0.4)."
   },
   "page_ids": { "Clinic/Hemorrhage": 532 },
   "radio_semantics": {

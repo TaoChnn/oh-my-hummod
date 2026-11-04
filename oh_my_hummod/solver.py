@@ -79,7 +79,11 @@ def parse_sol_history(path: str, names: set[str], max_points: int = 500) -> dict
         if len(keep) > max(1, max_points):
             del keep[-2]     # drop a middle sample to honour the cap
 
-    missing = [w for w in names if w.lower() not in {k.lower() for k in dropped}]
+    # The time axis is popped out of `dropped` above, but a caller that asked
+    # for it (System.X) did get its data back - as `t`. Do not report it missing.
+    missing = [w for w in names
+               if w.lower() not in {k.lower() for k in dropped}
+               and w.lower() != t_key.lower()]
     return {"points": len(keep), "stride": stride,
             "t": [t[i] for i in keep],
             "series": {k: [v[i] for i in keep] for k, v in dropped.items()},
