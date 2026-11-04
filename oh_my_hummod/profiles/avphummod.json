@@ -18,11 +18,27 @@
   "bind_marker": "Sizing",
   "quirks": {
     "lineage": "Modular-architecture AVP build; menu skeleton identical to hummod_3.0.4 (Stop=6, Go 12-30, Trauma/Hemorrhage=741); verified by engine_smoke with the 3.0.4 profile. Ships Model Solver.exe + ScriptedController.exe.",
+    "app_title": "HumMod : Integrative Biomedicine (v3.1.0) - the AVP engine is actually HumMod v3.1.0 (window title, verified 2026-11 R1 baseline run).",
+    "auto_profile_unreachable": "_detect_profile matches its Trauma/Sizing menu to hummod_3.0.4, so this profile is only used when a server is started with HUMMOD_PROFILE=avphummod. Functionally harmless: menu ids and quirks are identical to 3.0.4 (R1 full-parameter run passed with the 3.0.4 profile).",
+    "page_labels_owner_drawn": true,
+    "variable_names_differ_from_304": "SOL group names differ from 3.0.4: PO2Veins/CO2Veins (not *Vens), O2Artys/O2Veins.[O2], A2Pool.[A2(pMol/L)], FAPool, KAPool, TriglyceridePool, BodyH2O.TotalVol(L) (TBW), PeripheralResistance.TPR, CollectingDuct_H2O.Outflow (urine flow), organ consumption in *-Fuel.TotalGlucoseUsed(mG/Min)/FAUsed(mG/Min)/KAUsed(mG/Min). See out/experiments/baseline_avp/基线参数表.md.",
+    "epo_computed": true,
+    "no_clinic_menu": "Top-level menus: Circulation, Respiration, Metabolism, Body Fluids, Electrolytes, Hormones, ... Gender, Nervous System, Acid-Base, Heat, Miscellaneous, Organs, Lifestyle, Diagnosis, Intervention, Trauma, Pathology, Context, Sizing. Manual's Clinic->Chart is the startup Chart page (via '<' '>' pager).",
     "slider_commits": false,
     "model_noise": true
   },
   "page_ids": {
-    "Trauma/Hemorrhage": 741
+    "Trauma/Hemorrhage": 741,
+    "Circulation/Left Heart Pumping/Diastole": 63,
+    "Circulation/Pericardium": 74,
+    "Body Fluids/Blood/Viscosity": 184,
+    "Body Fluids/H2O/Distribution": 162,
+    "Organs/Brain/Circulation": 392,
+    "Organs/Skeletal Muscle/Circulation": 588,
+    "Respiration/Respiratory Center/Integration": 120,
+    "Metabolism/Ketoacids": 155,
+    "Miscellaneous/Carbon Monoxide/Uptake": 341,
+    "Hormones/EPO/Pool": 209
   },
   "radio_semantics": {
     "Trauma/Hemorrhage": {
