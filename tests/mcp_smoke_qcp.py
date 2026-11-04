@@ -1,5 +1,6 @@
 # MCP-protocol smoke for the QCP 2005 profile (stdio, same server, QCP engine).
 import asyncio
+import json
 import os
 import sys
 
@@ -26,7 +27,14 @@ async def main():
                 return " | ".join(c.text for c in res.content if getattr(c, "text", None))
 
             print("[profile]", await call("hummod_profile"))
-            print("[status] ", await call("hummod_status"))
+            status = json.loads(await call("hummod_status"))
+            print("[status] ", json.dumps(status))
+            if not status.get("running"):
+                # self-start: the smoke used to require a pre-running engine,
+                # which made it fail in fresh CI-like environments; the engine
+                # is a child of this session's server, so it dies with the
+                # session - fine for a smoke, no cleanup needed.
+                print("[start]  ", await call("hummod_start", {"key": "default", "hidden": False}))
             print("[nav]    ", await call("hummod_navigate", {"panel_path": "View/Basic Physiology"}))
             print("[go]     ", await call("hummod_go", {"duration_label": "1 Min"}))
             print("[snap]   ", await call("hummod_snapshot", {"name": "qcp_state", "vars": ["X"]}))
