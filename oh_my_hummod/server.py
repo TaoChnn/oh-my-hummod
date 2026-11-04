@@ -225,15 +225,27 @@ def hummod_status(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_start(key: str = "default") -> str:
-    """Start an engine (hidden window) if not running. Key comes from engines.json."""
+def hummod_start(key: str = "default", hidden: bool = True) -> str:
+    """Start an engine if not running. Key comes from engines.json.
+
+    hidden=True (default) starts with a hidden window, which suits HumMod 3.x.
+    QCP 2005 exits within seconds when started hidden (observed repeatedly),
+    so start it with hidden=False; the MCP tools attach to the visible window
+    just as well.
+    """
     if key not in _ENGINES:
         raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
     if key in _bridges and _bridges[key][0].main:
         return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
     b = Bridge(_ENGINES[key])  # exe name discovered from the folder
-    pid = b.start()
-    if PROFILE_NAME:  # explicit env profile avoids _detect_profile's menu race
+    pid = b.start(hidden=hidden)
+    # HUMMOD_PROFILE is the *default* engine's profile override (it only ever
+    # described the HUMMOD_ENGINE_DIR build). Applying it to NAMED engine keys
+    # made hummod_start return a wrong profile (and skip menu-based detection)
+    # whenever a named engine happened to be a different build - which is also
+    # how a wrong-dir start used to go unnoticed. Mirror get_bridge: the
+    # override wins only for the default key.
+    if PROFILE_NAME and key == "default":  # explicit env profile avoids _detect_profile's menu race
         p = Profile.load(PROFILE_NAME)
     else:
         p = None
