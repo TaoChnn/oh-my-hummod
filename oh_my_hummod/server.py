@@ -335,6 +335,7 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
     if mode in ("controls", "both"):
         controls = [{"cls": c.cls, "id": c.ctrl_id, "text": c.text[:120],
                      "enabled": c.enabled, "visible": c.visible,
+                     "shown": c.own_visible,
                      "radio": c.is_radio, "checkbox": c.is_checkbox,
                      "action": c.cls == "Button" and c.text.strip() == "!",
                      "button": c.cls == "Button",
@@ -427,12 +428,19 @@ def hummod_stop_state(engine: str = "default") -> str:
 @server.tool()
 @safe
 def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
-              engine: str = "default") -> str:
+              wait: bool = True, engine: str = "default") -> str:
     """Run the simulation for a Go-menu duration ('1 Min', '10 Min', 'To Next Hour', '1 Day', '30 Days', ...). Waits for completion and returns wall seconds.
 
     times repeats the same Go step (the Go menu has no '30 Sec' entry, so 30 s = times=3 of '10 Sec').
     verify=True additionally reads the model clock (System.X) before and after, which
     proves the run really advanced the simulation.
+
+    wait=False returns as soon as the run has been started instead of waiting for
+    it to finish. Use it for runs that take longer than the MCP client's request
+    timeout (30 s by default): a 3-week step needs several minutes, and a
+    blocking call is aborted by the client while the engine keeps simulating.
+    Poll with hummod_stop_state (stop_enabled=false means finished) and
+    hummod_busy, then read the result with hummod_snapshot.
 
     Completion is detected from the engine's UI thread (the model solves on it) plus
     the Stop menu item - on HumMod 3.0.4 the Stop item stays gray even while the
@@ -450,9 +458,18 @@ def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
     started_all = True
     signals = []
     polls = 0.0
-    for _ in range(times):
+    for i in range(times):
         before_status = b.status_text()
         b.command(node.cmd_id)
+        if not wait:
+            out = {"ok": True, "ran": duration_label, "times": times,
+                   "waited": False,
+                   "note": ("run started; poll hummod_stop_state / hummod_busy until "
+                            "the engine is idle, then hummod_snapshot for the state"),
+                   "wall_seconds": round(time.time() - t0, 1)}
+            if verify:
+                out["sim_time_before"] = t_before
+            return json.dumps(out)
         res = _wait_done(engine, before_status=before_status)
         polls += res.get("elapsed", 0.0)
         signals.append(res.get("signal", "?"))
@@ -548,11 +565,15 @@ def hummod_menu_command(item_path: str | None = None, engine: str = "default",
         return json.dumps({"ok": True, "pressed": f"menu_id={menu_id}", "menu_id": int(menu_id)})
     if not item_path:
         raise RuntimeError("provide item_path or menu_id")
-    node = b.menu_tree().walk(item_path)
+    b_, p_ = get_bridge(engine)
+    # resolve like a panel path so that owner-drawn / nested menu entries
+    # (QCP's canvas toolbar buttons) can be pressed by their label
+    node, resolved = _resolve_panel(b_.menu_tree(), item_path, p_)
     if node.cmd_id is None:
         raise RuntimeError(f"'{item_path}' has no command id (submenu)")
     b.command(node.cmd_id)
-    return json.dumps({"ok": True, "pressed": item_path, "menu_id": node.cmd_id})
+    return json.dumps({"ok": True, "pressed": item_path, "resolved": resolved,
+                       "menu_id": node.cmd_id})
 
 
 @server.tool()
@@ -986,10 +1007,39 @@ def hummod_history(sol_path: str, vars: list[str], max_points: int = 500) -> str
 
 @server.tool()
 @safe
-def hummod_dismiss_modal(engine: str = "default") -> str:
-    """Close any engine modal dialog (e.g. Tech window) that blocks automation."""
+def hummod_dismiss_modal(engine: str = "default", prefer: int = 6) -> str:
+    """Close any engine modal dialog (e.g. Tech window) that blocks automation.
+
+    `prefer` is the button id to click when the dialog offers it (6 = IDYES,
+    i.e. answer "yes / continue"; 1 = IDOK). HumMod 1.6.1 raises MessageBox
+    popups whose buttons are IDYES(6)/IDNO(7) - e.g. 'The ECG shows V-Fib!
+    Continue?' - so the button that is actually there has to be clicked.
+    Returns the dialogs that were found, their text, and whether they closed."""
     b, _ = get_bridge(engine)
-    return json.dumps({"dismissed": [hex(h) for h in b.dismiss_modals()]})
+    before = b.dialog_info()
+    found = b.dismiss_modals(prefer=prefer)
+    after = b.dialog_info()
+    return json.dumps({
+        "dismissed": [{"hwnd": hex(h), "text": next(
+            (d["message"] for d in before if d["hwnd"] == hex(h)), "")}
+            for h in found],
+        "still_open": after,
+        "ok": not after,
+    })
+
+
+@server.tool()
+@safe
+def hummod_modals(engine: str = "default") -> str:
+    """List the modal dialogs the engine currently has open (title, message, buttons).
+
+    Use this when a command fails with 'engine still blocked by a modal
+    dialog': it says *what* the engine is asking instead of only *that* it is
+    blocked."""
+    b, _ = get_bridge(engine)
+    dialogs = b.dialog_info()
+    return json.dumps({"count": len(dialogs), "dialogs": dialogs,
+                       "busy": b.busy()})
 
 
 @server.tool()

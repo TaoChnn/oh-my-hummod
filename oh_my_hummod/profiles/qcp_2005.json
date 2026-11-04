@@ -1,8 +1,18 @@
 {
   "name": "qcp_2005",
-  "exe_names": ["QCP 2005.EXE"],
-  "file": { "load_ics": 26, "save_ics": 27, "load_sol": null, "save_sol": null, "exit": 9 },
-  "dialog_edit_ids": [1001],
+  "exe_names": [
+    "QCP 2005.EXE"
+  ],
+  "file": {
+    "load_ics": 26,
+    "save_ics": 27,
+    "load_sol": null,
+    "save_sol": null,
+    "exit": 9
+  },
+  "dialog_edit_ids": [
+    1001
+  ],
   "stop_cmd_id": 24,
   "bind_marker": "Help",
   "quirks": {
@@ -24,7 +34,15 @@
     "View/Nephron Details": 716,
     "View/Anesthesia": 771,
     "View/Pharmacokinetics": 796,
-    "View/Autopsy Report": 809
+    "View/Autopsy Report": 809,
+    "Charts": 47,
+    "Monitor": 52,
+    "Blood And Urine Samples": 56,
+    "Environment": 75,
+    "Air Supply": 80,
+    "Exercise": 83,
+    "Diet": 90,
+    "Orthostasis": 94
   },
   "radio_semantics": {},
   "panels": {}

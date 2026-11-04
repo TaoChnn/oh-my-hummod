@@ -83,6 +83,7 @@ class Control:
     right: int = 0
     bottom: int = 0
     checked: bool = False
+    own_visible: bool = False   # WS_VISIBLE of the control itself
 
     @property
     def y_center(self) -> int:
@@ -353,13 +354,15 @@ class Bridge:
             # BM_GETCHECK is 0x00F0; 0x00F1 is BM_SETCHECK - reading with it
             # would *write* (un-check) the control and report 0 every time.
             check = user32.SendMessageW(hwnd, BM_GETCHECK, 0, 0)
+        style = user32.GetWindowLongW(hwnd, -16)
         return Control(hwnd=hwnd, ctrl_id=user32.GetDlgCtrlID(hwnd), cls=cls,
                        text=tb.value, visible=bool(user32.IsWindowVisible(hwnd)),
                        enabled=bool(user32.IsWindowEnabled(hwnd)),
-                       style=user32.GetWindowLongW(hwnd, -16),
+                       style=style,
                        scroll_pos=pos, scroll_min=mn, scroll_max=mx,
                        left=rect.left, top=rect.top, right=rect.right, bottom=rect.bottom,
-                       checked=bool(check))
+                       checked=bool(check),
+                       own_visible=bool(style & 0x10000000))  # WS_VISIBLE
 
     # ---------- actions ----------
 
@@ -447,22 +450,32 @@ class Bridge:
 
     def wait_idle(self, stop_cmd_id: int, timeout: float = 600.0,
                   start_grace: float = 8.0,
-                  before_status: str | None = None) -> dict:
+                  before_status: str | None = None,
+                  dismiss: bool = True) -> dict:
         """Wait until the simulation has really finished.
 
         HumMod 3.0.4 keeps the Stop menu item gray while the model is solving
         and keeps answering window messages, so neither can detect "running".
         The status bar is the reliable signal ("Solving ..." -> "Solving ... Done").
 
-        Returns {"started": bool, "elapsed": float, "signal": str}.
+        `dismiss` closes event popups that the model raises mid-run (1.6.1
+        pops "The ECG shows V-Fib! Continue?" and the symptom messages). Such a
+        popup is modal: while it is up the engine does not solve, so a run
+        would never finish and the caller would wait for the whole timeout.
+
+        Returns {"started": bool, "elapsed": float, "signal": str,
+                 "modals_dismissed": int}.
         """
         t0 = time.time()
         deadline = t0 + timeout
         before = self.status_text() if before_status is None else before_status
         started = False
         signal = "none"
+        dismissed = 0
         # phase 1 - catch the run starting
         while time.time() - t0 < start_grace:
+            if dismiss and self.busy():
+                dismissed += len(self.dismiss_modals())
             if self.solving():
                 started, signal = True, "status-text"
                 break
@@ -478,10 +491,13 @@ class Bridge:
                 started, signal = True, "status-text-fast"
         # phase 2 - wait for it to finish
         while time.time() < deadline:
+            if dismiss and self.busy():
+                dismissed += len(self.dismiss_modals())
             if not self.solving():
                 time.sleep(0.2)          # confirm: a solver pause is not the end
                 if not self.solving():
-                    return {"started": started, "elapsed": time.time() - t0, "signal": signal}
+                    return {"started": started, "elapsed": time.time() - t0,
+                            "signal": signal, "modals_dismissed": dismissed}
             time.sleep(0.05)
         raise TimeoutError(f"simulation did not finish within {timeout}s")
 
@@ -826,43 +842,69 @@ class Bridge:
 
     # ---------- dialogs ----------
 
-    def dismiss_modals(self) -> list[int]:
+    # Standard MessageBox button ids. HumMod 1.6.1 raises MessageBox-style
+    # popups from its model files: the ECG events and the symptom messages use
+    # MB_YESNO (IDYES/IDNO), the rest MB_OK (IDOK). Posting IDOK/IDCANCEL to a
+    # YES/NO box does nothing at all - the box has no such button - so those
+    # dialogs could never be closed and every engine command then failed with
+    # "engine still blocked by a modal dialog".
+    DIALOG_BUTTON_IDS = (1, 2, 6, 7)  # IDOK, IDCANCEL, IDYES, IDNO
+
+    def dialog_info(self) -> list[dict]:
+        """Describe every modal dialog the engine currently has open.
+
+        Returns hwnd / title / message / the buttons offered - enough for a
+        caller to report *why* the engine is blocked instead of just
+        "engine still blocked by a modal dialog".
+        """
+        out: list[dict] = []
+        for d in self._visible_dialogs():
+            kids = self._dialog_children(d)
+            msg = next((c.text for c in kids
+                        if c.cls == "Static" and c.ctrl_id == 65535), "")
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(d, buf, 256)
+            out.append({
+                "hwnd": hex(d),
+                "title": buf.value,
+                "message": msg,
+                "buttons": [{"id": c.ctrl_id, "text": c.text}
+                            for c in kids if c.cls == "Button"],
+            })
+        return out
+
+    def dismiss_modals(self, prefer: int = 6) -> list[int]:
+        """Close every modal dialog the engine has open.
+
+        `prefer` is the button id to click when the dialog offers it
+        (default IDYES = 6, i.e. answer "yes / continue"); dialogs without it
+        fall back to their first push button (IDOK for MB_OK boxes).
+        Returns the handles that were found (whether or not they closed).
+        """
         found: list[int] = []
-
-        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        def on_window(hwnd, _l):
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if pid.value == self.pid and user32.IsWindowVisible(hwnd):
-                buf = ctypes.create_unicode_buffer(256)
-                user32.GetClassNameW(hwnd, buf, 256)
-                if buf.value == "#32770":
-                    found.append(hwnd)
-            return True
-
-        user32.EnumWindows(on_window, 0)
-        for d in found:
-            # MessageBox-style dialogs (1.6.1 event modals) ignore BM_CLICK on
-            # their buttons - they want WM_COMMAND on the dialog itself.
-            user32.PostMessageW(d, WM_COMMAND, 1, 0)  # IDOK
-            user32.PostMessageW(d, WM_COMMAND, 2, 0)  # IDCANCEL
-
-            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-            def on_child(h, _l, _d=d):
-                cid = user32.GetDlgCtrlID(h)
-                if cid in (1, 2):  # IDOK / IDCANCEL
-                    user32.PostMessageW(h, BM_CLICK, 0, 0)
-                    return False
-                return True
-
-            user32.EnumChildWindows(d, on_child, 0)
-            # WM_CLOSE last: for dialogs that ignore both
-            user32.PostMessageW(d, WM_CLOSE, 0, 0)
-        time.sleep(0.3)
-        # verify: anything still open gets a second, harder pass
+        for d in self._visible_dialogs():
+            found.append(d)
+            buttons = [c for c in self._dialog_children(d)
+                       if c.cls == "Button" and c.visible and c.enabled
+                       and (c.style & 0x0F) in (0x00, 0x01, 0x03)]
+            target = next((b for b in buttons if b.ctrl_id == prefer), None)
+            if target is None and buttons:
+                target = buttons[0]
+            if target is not None:
+                user32.PostMessageW(target.hwnd, BM_CLICK, 0, 0)
+                time.sleep(0.2)
+            if d in self._visible_dialogs():
+                # BM_CLICK did not take - drive the dialog with WM_COMMAND.
+                user32.PostMessageW(d, WM_COMMAND,
+                                    target.ctrl_id if target else 1, 0)
+                time.sleep(0.15)
+            if d in self._visible_dialogs():
+                user32.PostMessageW(d, WM_CLOSE, 0, 0)
+                time.sleep(0.15)
+        # final hard pass: anything still open gets a synchronous WM_CLOSE
         still = [h for h in self._visible_dialogs() if h in found]
         for d in still:
-            user32.SendMessageTimeoutW(d, WM_COMMAND, 2, 0, 0x0002, 2000,
+            user32.SendMessageTimeoutW(d, WM_CLOSE, 0, 0, 0x0002, 2000,
                                        ctypes.byref(ctypes.c_size_t()))
         if still:
             time.sleep(0.2)
