@@ -24,7 +24,9 @@
     "variable_names_differ_from_304": "SOL group names differ from 3.0.4: PO2Veins/CO2Veins (not *Vens), O2Artys/O2Veins.[O2], A2Pool.[A2(pMol/L)], FAPool, KAPool, TriglyceridePool, BodyH2O.TotalVol(L) (TBW), PeripheralResistance.TPR, CollectingDuct_H2O.Outflow (urine flow), organ consumption in *-Fuel.TotalGlucoseUsed(mG/Min)/FAUsed(mG/Min)/KAUsed(mG/Min). See out/experiments/baseline_avp/基线参数表.md.",
     "epo_computed": true,
     "no_clinic_menu": "Top-level menus: Circulation, Respiration, Metabolism, Body Fluids, Electrolytes, Hormones, ... Gender, Nervous System, Acid-Base, Heat, Miscellaneous, Organs, Lifestyle, Diagnosis, Intervention, Trauma, Pathology, Context, Sizing. Manual's Clinic->Chart is the startup Chart page (via '<' '>' pager).",
-    "slider_commits": false,
+    "slider_commits": true,
+    "slider_pages": "Most sliders commit via THUMBPOSITION+ENDSCROLL (R2 field trial 2026-11): Lifestyle/Environment Temp(F)=pos-30 (pos 130 -> 100 F, beyond-nominal-range positions accepted), Wind MPH=pos; Lifestyle/Exercise/Treadmill Speed(MPH)=pos*0.5; Lifestyle/Diet/Control H2O 'Fixed Intake' L/Day=pos*0.1 (ctrl 10140, ordinal 2 of 4). EXCEPTION: Lifestyle/Diet/Goal scrollers (nutrition kCal + electrolyte steppers) do NOT commit at any position - same fault as 3.0.4 Goal page (B-3). Water goal is NOT on Diet/Goal in v3.1.0 (page holds only Nutrition/Electrolytes); it lives on Diet/Control H2O group.",
+    "radio_pages": "R2 field trial: Lifestyle/Posture ordinal 7 of 8 = Request Standing (PostureControl.Request=3, Status.Posture=3); Lifestyle/Exercise/Control ordinal 2 of 3 = Treadmill (Status.Treadmill=1); Lifestyle/Exercise/Treadmill ordinal 0 of 2 = Walk (Exercise-Treadmill.RunOrWalk=0); Lifestyle/Diet/Control ordinal 3 of 4 = H2O Fixed Intake (DietIntakeH2O.Fixed?=1; H2O radios 10136/10138 DO expose check state). All other radios keep state in the model only - verify with probe_vars.",
     "model_noise": true
   },
   "page_ids": {
@@ -38,7 +40,13 @@
     "Respiration/Respiratory Center/Integration": 120,
     "Metabolism/Ketoacids": 155,
     "Miscellaneous/Carbon Monoxide/Uptake": 341,
-    "Hormones/EPO/Pool": 209
+    "Hormones/EPO/Pool": 209,
+    "Lifestyle/Environment": 629,
+    "Lifestyle/Posture": 634,
+    "Lifestyle/Exercise/Control": 630,
+    "Lifestyle/Exercise/Treadmill": 632,
+    "Lifestyle/Diet/Control": 627,
+    "Lifestyle/Diet/Goal": 625
   },
   "radio_semantics": {
     "Trauma/Hemorrhage": {
