@@ -24,7 +24,15 @@
     "go_async": true,
     "window_class": "QCP4",
     "pages_via_view_menu": true,
-    "hemorrhage_panel": "not a menu page; reached via Clinical Buttons page (canvas buttons) - not yet mapped"
+    "hemorrhage_panel": "not a menu page; reached via Clinical Buttons page (canvas buttons) - not yet mapped",
+    "needs_visible_start": true,
+    "start_note": "QCP 2005.EXE exits within seconds when started hidden+detached (hummod_start hidden=True); start with hidden=False, then attach.",
+    "slider_commits": true,
+    "slider_note": "QCP sliders commit model values (unlike 3.0.4), BUT SB_THUMBPOSITION to position 0 is ignored; set_slider falls back to SB_LINELEFT steps for pos 0. Slider pos->value maps are non-linear per slider (e.g. Diet Table Salt: pos 1-10 step +1, pos 11-27 step +10, pos 28-43 step +20; range 0-43).",
+    "page_reflows": true,
+    "reflow_note": "Page control rects shift on window restore/repaint (e.g. Diet slider column moved x=44 -> x=382 screen); re-inspect controls before coordinate-based clicks, ordinals stay stable.",
+    "ics_state_only": true,
+    "ics_note": "Save ICs holds only ~1370 STATE variables (pools, gains, clamps). Derived outcomes (MAP, atrial pressures, hormone concentrations, excretion rates) are NOT in the ICS - read them from the page canvases via hummod_shot (Blood Pressure page 144 shows MAP/SBP/DBP/RAP/LAP at once)."
   },
   "page_ids": {
     "View/Clinical Buttons": 46,
@@ -42,8 +50,33 @@
     "Air Supply": 80,
     "Exercise": 83,
     "Diet": 90,
-    "Orthostasis": 94
+    "Orthostasis": 94,
+    "Daily Planner/Control": 69,
+    "Daily Planner/Schedule": 74,
+    "Blood Pressure": 144,
+    "Electrolytes Na+": 244,
+    "Angiotensin": 327,
+    "Kidney Renin": 332,
+    "Antidiuretic Hormone": 337,
+    "Aldosterone": 343,
+    "Atrial Natriuretic Peptide": 347,
+    "Insulin": 357,
+    "Glucagon": 361,
+    "Metabolism Summary": 367,
+    "Fatty Acids": 375,
+    "Glucose": 378,
+    "Triglycerides": 389
   },
-  "radio_semantics": {},
+  "slider_maps": {
+    "Diet": {
+      "ordinal_to_control": "0=H2O, 1=SO4-, 2=PO4-, 3=K+, 4=Extra Cl-, 5=Extra Na+, 6=Table Salt, 7=Protein, 8=Fat, 9=Carbo's (sliders sorted by ctrl_id, all 0 -> z-order, descending y)",
+      "table_salt_mmol_day": "pos 0-10 -> value=pos; pos 11-27 -> 10+10*(pos-10); pos 28-43 -> 180+20*(pos-27); max 500 at pos 43",
+      "kcal_sliders": "value = pos * 20 (range 0-130: Carbo's, Fat, Protein)",
+      "water_l_day": "value = pos * 0.1 (range 0-100)"
+    }
+  },
+  "radio_semantics": {
+    "Control": {"off": 0, "on": 1, "note": "Daily Planner Switch radios have readable captions (Off id 1199 / On id 1200); ordinal order = ctrl_id order"}
+  },
   "panels": {}
 }

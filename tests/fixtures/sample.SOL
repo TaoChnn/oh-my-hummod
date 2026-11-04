@@ -1,0 +1,61 @@
+<solution>
+<time> Tue Nov 03 15:52:24 2026 </time>
+
+<index> 7 </index>
+
+<var>
+<name> Hemorrhage.Volume </name>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+</var>
+<var>
+<name> Hemorrhage.Switch </name>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+<val> 0. </val>
+</var>
+<var>
+<name> SANode-Rate.Rate </name>
+<val> 72.9105781109728 </val>
+<val> 72.9858051229388 </val>
+<val> 73.0680330303923 </val>
+<val> 73.2041581412707 </val>
+<val> 73.309584212485 </val>
+<val> 73.3744900697819 </val>
+<val> 73.4306664686722 </val>
+<val> 73.4306688196504 </val>
+</var>
+<var>
+<name> BloodVol.Vol </name>
+<val> 5406.2 </val>
+<val> 5406.58702893812 </val>
+<val> 5407.04103131581 </val>
+<val> 5407.57938645907 </val>
+<val> 5408.20162245935 </val>
+<val> 5408.89181216466 </val>
+<val> 5409.64165009672 </val>
+<val> 5409.64165199976 </val>
+</var>
+<var>
+<name> System.X </name>
+<val> 0. </val>
+<val> 0.1666666 </val>
+<val> 0.3333332 </val>
+<val> 0.4999998 </val>
+<val> 0.6666664 </val>
+<val> 0.833333 </val>
+<val> 0.9999996 </val>
+<val> 1. </val>
+</var>
+</solution>

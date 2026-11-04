@@ -61,6 +61,7 @@ MFS_MASK = 0x0003  # MFS_GRAYED | MFS_DISABLED
 
 SB_THUMBPOSITION = 4
 SB_ENDSCROLL = 8
+SB_LINELEFT = 0
 WM_GETTEXT = 0x000D
 BM_GETCHECK = 0x00F0   # read the check state (BM_SETCHECK is 0x00F1)
 BM_SETCHECK = 0x00F1
@@ -403,8 +404,25 @@ class Bridge:
                                       0x0002, 2000, ctypes.byref(res)) == 0:
             raise RuntimeError("text update timed out")
 
+    @staticmethod
+    def _scroll_pos(ctrl_hwnd: int) -> int | None:
+        return user32.GetScrollPos(ctrl_hwnd, 0)
+
     def set_slider(self, ctrl_hwnd: int, parent_hwnd: int, pos: int, commit_endscroll: bool = True) -> None:
-        """Move a ScrollBar thumb; commit behaviour is engine-dependent (see profile)."""
+        """Move a ScrollBar thumb; commit behaviour is engine-dependent (see profile).
+
+        QCP 2005 ignores SB_THUMBPOSITION with position 0 (the value never
+        commits to the minimum), so pos 0 is set by repeated SB_LINELEFT
+        line-scrolls instead - each of those commits immediately, and
+        SB_LINELEFT at 0 is a no-op. The control's reported thumb position can
+        be unsynced (0) before QCP has painted the page, so never trust it to
+        mean "already at 0": always overshoot with a fixed message budget.
+        """
+        if pos == 0:
+            for _ in range(60):
+                user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_LINELEFT, ctrl_hwnd)
+                time.sleep(0.04)
+            return
         user32.PostMessageW(parent_hwnd, WM_HSCROLL,
                             (pos << 16) | SB_THUMBPOSITION, ctrl_hwnd)
         time.sleep(0.06)
