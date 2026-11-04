@@ -358,6 +358,11 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
         out["button_captions"] = [c["text"] for c in controls
                                    if c["button"] and c["text"].strip()
                                    and c["text"].strip() != "!"]
+        out["visibility_note"] = (
+            "'visible' is IsWindowVisible, which is false for every control when "
+            "the engine window itself is hidden (the MCP server starts it with "
+            "SW_HIDE). 'shown' is the control's own WS_VISIBLE bit and says "
+            "whether the widget is part of the page.")
     return json.dumps(out)[:max_chars]
 
 

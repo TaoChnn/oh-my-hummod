@@ -850,6 +850,27 @@ class Bridge:
     # "engine still blocked by a modal dialog".
     DIALOG_BUTTON_IDS = (1, 2, 6, 7)  # IDOK, IDCANCEL, IDYES, IDNO
 
+    @staticmethod
+    def pick_dialog_button(buttons, prefer: int = 6):
+        """Choose which button of a modal dialog to click.
+
+        `buttons` is a list of Control-like objects with .ctrl_id, .visible,
+        .enabled and .style. Returns the preferred button when the dialog
+        offers it (IDYES by default, i.e. answer "yes / continue"), otherwise
+        the first push button, otherwise None.
+
+        Kept separate from the Win32 plumbing so it can be unit-tested: the
+        old implementation only ever looked for IDOK/IDCANCEL, which a
+        MB_YESNO dialog does not have.
+        """
+        usable = [b for b in buttons
+                  if getattr(b, "visible", True) and getattr(b, "enabled", True)
+                  and (getattr(b, "style", 0) & 0x0F) in (0x00, 0x01, 0x03)]
+        for b in usable:
+            if b.ctrl_id == prefer:
+                return b
+        return usable[0] if usable else None
+
     def dialog_info(self) -> list[dict]:
         """Describe every modal dialog the engine currently has open.
 
@@ -884,12 +905,8 @@ class Bridge:
         found: list[int] = []
         for d in self._visible_dialogs():
             found.append(d)
-            buttons = [c for c in self._dialog_children(d)
-                       if c.cls == "Button" and c.visible and c.enabled
-                       and (c.style & 0x0F) in (0x00, 0x01, 0x03)]
-            target = next((b for b in buttons if b.ctrl_id == prefer), None)
-            if target is None and buttons:
-                target = buttons[0]
+            buttons = [c for c in self._dialog_children(d) if c.cls == "Button"]
+            target = self.pick_dialog_button(buttons, prefer)
             if target is not None:
                 user32.PostMessageW(target.hwnd, BM_CLICK, 0, 0)
                 time.sleep(0.2)
