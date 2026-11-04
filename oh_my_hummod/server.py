@@ -12,6 +12,7 @@ Env:  HUMMOD_ENGINE_DIR  folder holding the engine EXE + model XML
 """
 from __future__ import annotations
 
+import ctypes
 import functools
 import json
 import os
@@ -76,8 +77,13 @@ def _detect_profile(b: Bridge) -> Profile:
 
 
 def get_bridge(engine: str = "default") -> tuple[Bridge, Profile]:
-    if engine in _bridges and _bridges[engine][0].main:
-        return _bridges[engine]
+    if engine in _bridges:
+        b0, p0 = _bridges[engine]
+        # the engine process may have been restarted (or crashed) since the
+        # bridge was cached - a dead window handle must not be reused
+        if b0.main and user32.IsWindow(b0.main):
+            return b0, p0
+        _bridges.pop(engine, None)
     if engine not in _ENGINES:
         raise RuntimeError(f"unknown engine {engine!r}; known: {sorted(_ENGINES)}")
     d = _ENGINES[engine]
@@ -171,12 +177,13 @@ def _navigate(panel_path: str, engine: str = "default") -> int:
     return node.cmd_id
 
 
-def _wait_done(engine: str = "default", cap: float = 900.0) -> float:
+def _wait_done(engine: str = "default", cap: float = 900.0,
+               before_status: str | None = None) -> dict:
     b, p = get_bridge(engine)
     stop_id = p.stop_cmd_id
     if stop_id is None:  # discovery fallback: find the item labelled Stop
         stop_id = b.menu_tree().find("Stop").cmd_id
-    return b.wait_idle(stop_id, cap)
+    return b.wait_idle(stop_id, cap, before_status=before_status)
 
 
 @server.tool()
@@ -248,6 +255,55 @@ def hummod_restart(engine: str = "default") -> str:
 
 @server.tool()
 @safe
+def hummod_restart_engine(engine: str = "default") -> str:
+    """Relaunch the engine PROCESS so edited model XML (Structure/*.DES) takes effect.
+
+    hummod_restart only resets the in-memory model state - it does NOT re-read
+    the model files, so a <parm> injected into the XML stays invisible until the
+    process is restarted. This tool closes the engine and starts a fresh copy of
+    the same engine directory, then waits for the model to bind again.
+
+    Only the named engine is touched; other registered engines keep running.
+    """
+    if engine not in _ENGINES:
+        raise RuntimeError(f"unknown engine {engine!r}; known: {sorted(_ENGINES)}")
+    d = _ENGINES[engine]
+    exe_name = None
+    old = _bridges.get(engine)
+    if old is not None:
+        exe_name = old[0].exe_name
+    closed = False
+    if old is not None and old[0].main:
+        closed = old[0].terminate()
+    else:
+        probe = Bridge(d, exe_name=exe_name)
+        if probe.attach():
+            exe_name = probe.exe_name
+            closed = probe.terminate()
+    _bridges.pop(engine, None)
+    b = Bridge(d, exe_name=exe_name)
+    pid = b.start()
+    if PROFILE_NAME and engine == "default":
+        p = Profile.load(PROFILE_NAME)
+    else:
+        p = None
+        for _ in range(30):
+            try:
+                p = _detect_profile(b)
+                break
+            except RuntimeError:
+                time.sleep(1.0)
+        if p is None:
+            raise RuntimeError("engine restarted but its build menu never appeared")
+    b.wait_ready(p.bind_marker)
+    _bridges[engine] = (b, p)
+    return json.dumps({"ok": True, "action": "restart_engine", "pid": pid,
+                       "profile": p.name, "old_process_closed": closed,
+                       "engine_dir": d})
+
+
+@server.tool()
+@safe
 def hummod_inspect(max_chars: int = 20000, engine: str = "default",
                    mode: str = "both", panel_path: str | None = None) -> str:
     """Inspect the engine: mode='menu' (menu tree with command ids and full paths),
@@ -273,6 +329,11 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
                      "enabled": c.enabled, "visible": c.visible,
                      "radio": c.is_radio, "checkbox": c.is_checkbox,
                      "action": c.cls == "Button" and c.text.strip() == "!",
+                     "button": c.cls == "Button",
+                     "checked": c.checked if c.check_state_readable else None,
+                     "check_readable": c.check_state_readable,
+                     "button_type": c.button_type if c.cls == "Button" else None,
+                     "style": hex(c.style) if c.cls == "Button" else None,
                      "pos": c.scroll_pos, "min": c.scroll_min, "max": c.scroll_max}
                     for c in b.controls()]
         out["controls"] = controls
@@ -281,14 +342,27 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
             "actions": sum(1 for c in controls if c["action"]),
             "edits": sum(1 for c in controls if c["cls"] == "Edit"),
             "sliders": sum(1 for c in controls if c["cls"] == "ScrollBar"),
+            "buttons": sum(1 for c in controls if c["button"]),
+            "checked": [i for i, c in enumerate(controls) if c["checked"]],
         }
+        out["button_captions"] = [c["text"] for c in controls
+                                   if c["button"] and c["text"].strip()
+                                   and c["text"].strip() != "!"]
     return json.dumps(out)[:max_chars]
 
 
 @server.tool()
 @safe
-def hummod_navigate(panel_path: str, engine: str = "default") -> str:
-    """Switch the engine to a panel page by menu path, e.g. 'Trauma/Hemorrhage' or 'Diagnosis/Chart'."""
+def hummod_navigate(panel_path: str | None = None, engine: str = "default",
+                    menu_id: int | None = None) -> str:
+    """Switch the engine to a panel page by menu path, e.g. 'Trauma/Hemorrhage' or 'Diagnosis/Chart'.
+    Pass menu_id=<cmd id> for pages whose menu label is empty (QCP's owner-drawn toolbar buttons)."""
+    if menu_id is not None:
+        b, _ = get_bridge(engine)
+        b.navigate(int(menu_id))
+        return json.dumps({"ok": True, "navigated": f"menu_id={menu_id}", "menu_id": int(menu_id)})
+    if not panel_path:
+        raise RuntimeError("provide panel_path or menu_id")
     mid = _navigate(panel_path, engine)
     return json.dumps({"ok": True, "navigated": panel_path, "menu_id": mid})
 
@@ -306,28 +380,128 @@ def hummod_stop_state(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_go(duration_label: str, engine: str = "default") -> str:
-    """Run the simulation for a Go-menu duration ('1 Min', '10 Min', 'To Next Hour', '1 Day', '30 Days', ...). Waits for completion (Stop grays) and returns wall seconds."""
-    b, _ = get_bridge(engine)
+def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
+              engine: str = "default") -> str:
+    """Run the simulation for a Go-menu duration ('1 Min', '10 Min', 'To Next Hour', '1 Day', '30 Days', ...). Waits for completion and returns wall seconds.
+
+    times repeats the same Go step (the Go menu has no '30 Sec' entry, so 30 s = times=3 of '10 Sec').
+    verify=True additionally reads the model clock (System.X) before and after, which
+    proves the run really advanced the simulation.
+
+    Completion is detected from the engine's UI thread (the model solves on it) plus
+    the Stop menu item - on HumMod 3.0.4 the Stop item stays gray even while the
+    model is running, so it alone cannot tell 'finished' from 'still running'."""
+    b, p = get_bridge(engine)
     label = duration_label.strip()
     if label.lower().startswith("go/"):
         label = label.split("/", 1)[1]  # tolerate "Go/1 Min" as well as "1 Min"
     node = b.menu_tree().walk("Go/" + label)
     if node.cmd_id is None:
         raise RuntimeError(f"'{label}' is not a runnable Go entry")
+    times = max(1, int(times))
+    t_before = _sim_time(b, p) if verify else None
     t0 = time.time()
-    b.command(node.cmd_id)
-    wall = _wait_done(engine)
-    return json.dumps({"ok": True, "ran": duration_label,
-                       "wall_seconds": round(time.time() - t0, 1),
-                       "stop_poll_seconds": round(wall, 1)})
+    started_all = True
+    signals = []
+    polls = 0.0
+    for _ in range(times):
+        before_status = b.status_text()
+        b.command(node.cmd_id)
+        res = _wait_done(engine, before_status=before_status)
+        polls += res.get("elapsed", 0.0)
+        signals.append(res.get("signal", "?"))
+        started_all = started_all and res.get("started", False)
+    out = {"ok": True, "ran": duration_label, "times": times,
+           "wall_seconds": round(time.time() - t0, 1),
+           "stop_poll_seconds": round(polls, 1),
+           "started": started_all,
+           "signal": signals[0] if len(set(signals)) == 1 else signals}
+    if not started_all:
+        out["note"] = ("the engine never showed as busy - the run may have completed "
+                       "before the first probe; use verify=True to confirm the "
+                       "simulation clock moved")
+    if verify:
+        t_after = _sim_time(b, p)
+        out["sim_time_before"] = t_before
+        out["sim_time_after"] = t_after
+        out["sim_minutes_advanced"] = (None if (t_before is None or t_after is None)
+                                       else round(t_after - t_before, 4))
+    return json.dumps(out)
 
 
 @server.tool()
 @safe
-def hummod_menu_command(item_path: str, engine: str = "default") -> str:
-    """Press any menu entry by path, e.g. 'Restart', 'File/Save Initial Conditions', 'Go/5 Min' (does not wait; use hummod_go for durations)."""
+def hummod_busy(engine: str = "default") -> str:
+    """Report whether the engine is still working.
+
+    Combines the signals that matter: the UI thread's responsiveness (the model
+    solves on the UI thread, so the window stops answering while busy), the Stop
+    menu item and the status-bar text. Useful to confirm that a run has really
+    finished before exporting a snapshot."""
+    b, p = get_bridge(engine)
+    stop_id = p.stop_cmd_id
+    if stop_id is None:
+        stop_id = b.menu_tree().find("Stop").cmd_id
+    responsive = b.ui_responsive(500)
+    return json.dumps({"ok": True,
+                       "busy": not responsive,
+                       "ui_responsive": responsive,
+                       "stop_enabled": bool(b.menu_item_enabled(stop_id)),
+                       "status_text": b.status_text()})
+
+
+def _sim_time(b: Bridge, p: Profile) -> float | None:
+    """Read the model clock (System.X, in minutes) from the engine."""
+    try:
+        path = _export_snapshot(b, p, "_simtime_" + datetime.now().strftime("%H%M%S%f"))
+        vals = parse_export(path, {"system.x"})
+        for k, v in vals.items():
+            if k.lower() == "system.x":
+                return float(v)
+    except Exception:
+        return None
+    return None
+
+
+@server.tool()
+@safe
+def hummod_button(panel_path: str, caption: str, engine: str = "default") -> str:
+    """Click a *labelled* panel button by its caption, e.g. 'Neurological Signs' on Diagnosis/Evaluation.
+
+    hummod_action only covers the canvas-drawn '!' triggers; plain buttons with a
+    caption (page sub-navigation, graph tabs) had no way to be pressed. The caption
+    is matched case-insensitively, first exactly, then as a substring."""
     b, _ = get_bridge(engine)
+    _navigate(panel_path, engine)
+    want = caption.strip().lower()
+    buttons = [c for c in b.controls() if c.cls == "Button" and c.text.strip()]
+    exact = [c for c in buttons if c.text.strip().lower() == want]
+    partial = [c for c in buttons if want in c.text.strip().lower()]
+    hits = exact or partial
+    if not hits:
+        avail = sorted({c.text.strip() for c in buttons})
+        raise RuntimeError(f"no button captioned {caption!r} on {panel_path}; available: {avail[:20]}")
+    if len(hits) > 1 and not exact:
+        raise RuntimeError(f"caption {caption!r} is ambiguous ({len(hits)} matches); use a longer caption")
+    target = hits[0]
+    b.press(target.hwnd)
+    time.sleep(0.3)
+    return json.dumps({"ok": True, "panel": panel_path, "caption": target.text.strip(),
+                       "ctrl_id": target.ctrl_id, "matches": len(hits)})
+
+
+@server.tool()
+@safe
+def hummod_menu_command(item_path: str | None = None, engine: str = "default",
+                        menu_id: int | None = None) -> str:
+    """Press any menu entry by path, e.g. 'Restart', 'File/Save Initial Conditions', 'Go/5 Min' (does not wait; use hummod_go for durations).
+    Pass menu_id=<cmd id> instead of item_path for entries whose label is empty (owner-drawn toolbar/popup buttons)."""
+    b, _ = get_bridge(engine)
+    if menu_id is not None:
+        b.command(int(menu_id))
+        return json.dumps({"ok": True, "pressed": f"menu_id={menu_id}", "menu_id": int(menu_id)})
+    if not item_path:
+        raise RuntimeError("provide item_path or menu_id")
     node = b.menu_tree().walk(item_path)
     if node.cmd_id is None:
         raise RuntimeError(f"'{item_path}' has no command id (submenu)")
@@ -337,8 +511,194 @@ def hummod_menu_command(item_path: str, engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | None = None, value: str | None = None, engine: str = "default") -> str:
-    """Click a radio button on a panel page. Prefer value='On'/'Off' (label semantics from the profile); or ordinal among radios sorted by control id (expected = total count guardrail)."""
+def hummod_shot(name: str, engine: str = "default", restore: bool = True) -> str:
+    """Screenshot the engine window to a PNG in the MCP output dir.
+
+    Essential for canvas-drawn engines (QCP) where the panels have no widget
+    tree - the picture is the only view of the current page. Returns the path
+    and the image size; coordinates in the picture are window-relative and can
+    be passed straight back to hummod_click / hummod_drag."""
+    b, _ = get_bridge(engine)
+    os.makedirs(OUTDIR, exist_ok=True)
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+    path = os.path.join(OUTDIR, safe_name + (".png" if not safe_name.lower().endswith(".png") else ""))
+    if os.path.exists(path):
+        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".png")
+    if restore:
+        b.restore_window()
+    w, h = b.capture_png(path)
+    return json.dumps({"ok": True, "path": path, "size": [w, h],
+                       "origin": "window-relative (x right, y down)",
+                       "window_rect": list(b.window_rect()),
+                       "client_origin": list(b.client_origin())})
+
+
+@server.tool()
+@safe
+def hummod_dialogs(engine: str = "default") -> str:
+    """List the engine's visible modal dialogs (#32770) and their child controls.
+
+    Use it to find the file-save / Find / parameter dialogs that QCP-style
+    engines open, and to see their Edit + OK controls."""
+    b, _ = get_bridge(engine)
+    out = []
+    for d in b._visible_dialogs():
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(d, buf, 256)
+        kids = b._dialog_children(d)
+        out.append({"hwnd": hex(d), "title": buf.value,
+                    "controls": [{"cls": k.cls, "id": k.ctrl_id, "text": k.text[:80],
+                                  "visible": k.visible, "enabled": k.enabled,
+                                  "rect": [k.left, k.top, k.right, k.bottom]} for k in kids]})
+    return json.dumps({"ok": True, "dialogs": out})
+
+
+@server.tool()
+@safe
+def hummod_popup(engine: str = "default") -> str:
+    """List visible popup menus (#32768) with their items and command ids.
+
+    QCP opens its panel pickers (Blood / Hormones / Kidney ...) as popup menus
+    that are not part of the menu bar; while one is open this returns its
+    entries so the caller can pick one by id."""
+    b, _ = get_bridge(engine)
+    return json.dumps({"ok": True, "popups": b.popup_menus()})
+
+
+@server.tool()
+@safe
+def hummod_listbox(dialog_title: str, control_id: int, engine: str = "default",
+                   select: int | None = None, select_text: str | None = None) -> str:
+    """Read the items and the current selection of a list box inside an open dialog.
+
+    select / select_text pick an item (by index or by substring) and notify the
+    dialog, which is how QCP's 'Find Variable's Panel' populates the Item and
+    Panel lists from the Category list."""
+    b, _ = get_bridge(engine)
+    dlg = b.dialog_with_text(dialog_title) or b.dialog_by_title(dialog_title)
+    if dlg is None:
+        raise RuntimeError(f"no dialog matching {dialog_title!r}")
+    for k in b._dialog_children(dlg):
+        if k.cls == "ListBox" and k.ctrl_id == control_id:
+            if select is None and select_text is None:
+                return json.dumps({"ok": True, "items": b.listbox_items(k.hwnd),
+                                   "selected": b.listbox_selected(k.hwnd)})
+            items = b.listbox_items(k.hwnd)
+            idx = select
+            if idx is None:
+                idx = next((i for i, it in enumerate(items)
+                            if select_text.strip().lower() in it.strip().lower()), None)
+                if idx is None:
+                    raise RuntimeError(f"no item matching {select_text!r}; "
+                                       f"available: {items[:40]}")
+            res = b.listbox_select(k.hwnd, idx)
+            return json.dumps({"ok": True, "selected_item": items[idx],
+                               "selection": res,
+                               "items": b.listbox_items(k.hwnd)})
+    raise RuntimeError(f"no list box with control id {control_id} in {dialog_title!r}")
+
+
+@server.tool()
+@safe
+def hummod_dialog_button(dialog_title: str, caption: str, engine: str = "default") -> str:
+    """Press a button of an open dialog by its caption (e.g. 'View Panel', 'Close')."""
+    b, _ = get_bridge(engine)
+    dlg = b.dialog_with_text(dialog_title) or b.dialog_by_title(dialog_title)
+    if dlg is None:
+        raise RuntimeError(f"no dialog matching {dialog_title!r}")
+    if not b.press_dialog_button(dlg, caption):
+        raise RuntimeError(f"no button captioned {caption!r}")
+    time.sleep(0.3)
+    return json.dumps({"ok": True, "pressed": caption, "dialog": hex(dlg)})
+
+
+@server.tool()
+@safe
+def hummod_open_panel(variable: str, engine: str = "default",
+                       category: str | None = None,
+                       panel: str | None = None) -> str:
+    """Open the panel that shows a variable, via the engine's own Find dialog.
+
+    QCP's pages are canvas-drawn and are not reachable through the menu tree,
+    so this is the reliable way to switch panels: Find -> Category -> Item ->
+    Panel -> 'View Panel'. `variable` may be the full variable name or a unique
+    substring; `category` optionally narrows the search."""
+    b, _ = get_bridge(engine)
+    dlg = b.dialog_with_text("FIND VARIABLE'S PANEL")
+    if dlg is None:
+        b.command(b.menu_tree().walk("Find").cmd_id)
+        time.sleep(1.0)
+        dlg = b.dialog_with_text("FIND VARIABLE'S PANEL")
+    if dlg is None:
+        raise RuntimeError("the Find dialog did not open")
+    lbs = {k.ctrl_id: k.hwnd for k in b._dialog_children(dlg) if k.cls == "ListBox"}
+    if 10 not in lbs or 20 not in lbs:
+        raise RuntimeError(f"unexpected Find dialog layout: {sorted(lbs)}")
+    cats = b.listbox_items(lbs[10])
+    want = variable.strip().lower()
+    tried = []
+    for ci, cname in enumerate(cats):
+        if category and category.strip().lower() not in cname.strip().lower():
+            continue
+        b.listbox_select(lbs[10], ci)
+        items = b.listbox_items(lbs[20])
+        hit = next((i for i, it in enumerate(items) if want in it.strip().lower()), None)
+        if hit is None:
+            tried.append({"category": cname, "n_items": len(items)})
+            continue
+        b.listbox_select(lbs[20], hit)
+        pi = 0
+        panels = b.listbox_items(lbs[30]) if 30 in lbs else []
+        if panels:
+            pi = 0
+            if panel:
+                pi = next((k for k, pn in enumerate(panels)
+                           if panel.strip().lower() in pn.strip().lower()), 0)
+            b.listbox_select(lbs[30], pi)
+            panels = b.listbox_items(lbs[30])
+        b.press_dialog_button(dlg, "View Panel")
+        time.sleep(0.4)
+        b.press_dialog_button(dlg, "Close")
+        return json.dumps({"ok": True, "variable": variable, "category": cname,
+                           "item": items[hit], "panels": panels,
+                           "panel_opened": panels[pi] if panels else None})
+    return json.dumps({"ok": False, "error": f"variable {variable!r} not found",
+                       "categories": cats, "tried": tried})
+
+
+@server.tool()
+@safe
+def hummod_click(x: int, y: int, engine: str = "default", button: str = "left",
+                 double: bool = False, method: str = "message") -> str:
+    """Click at window-relative (x, y) - the coordinate space of hummod_shot.
+
+    method='message' (default) sends WM_LBUTTON*/WM_RBUTTON* to the window and
+    works for owner-drawn canvases; method='mouse' moves the real cursor."""
+    b, _ = get_bridge(engine)
+    info = b.click(int(x), int(y), button=button, double=double, method=method)
+    return json.dumps({"ok": True, **info})
+
+
+@server.tool()
+@safe
+def hummod_drag(x1: int, y1: int, x2: int, y2: int, engine: str = "default",
+                steps: int = 20) -> str:
+    """Drag from (x1,y1) to (x2,y2) in window coordinates - canvas slidebars."""
+    b, _ = get_bridge(engine)
+    return json.dumps({"ok": True, **b.drag(int(x1), int(y1), int(x2), int(y2), steps=steps)})
+
+
+@server.tool()
+@safe
+def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | None = None,
+                 value: str | None = None, probe_vars: list[str] | None = None,
+                 engine: str = "default") -> str:
+    """Click a radio button on a panel page. Prefer value='On'/'Off' (label semantics from the profile); or ordinal among radios sorted by control id (expected = total count guardrail).
+
+    probe_vars optionally names model variables to read back after the click, so
+    the effect can be verified at model level (e.g. ['RespiratoryCenter-Integration.TotalDrive'])
+    - the only reliable confirmation when the widget's own check state is not exposed.
+    """
     b, p = get_bridge(engine)
     _navigate(panel_path, engine)
     radios = sorted([c for c in b.controls() if c.is_radio], key=lambda c: c.ctrl_id)
@@ -365,13 +725,42 @@ def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | No
     else:
         raise RuntimeError("provide value='On'/'Off' or ordinal")
     b.press(target.hwnd)
-    time.sleep(0.15)
+    time.sleep(0.2)
     fresh = sorted([c for c in b.controls() if c.is_radio], key=lambda c: c.ctrl_id)
-    return json.dumps({"ok": True,
-                       "pressed": f"{panel_path} radio[{radios.index(target)}]"
-                                  + (f" ({value})" if value else ""),
-                       "count": len(radios),
-                       "checked": [i for i, c in enumerate(fresh) if c.checked]})
+    raw = [i for i, c in enumerate(fresh) if c.checked]
+    style_ok = all(c.check_state_readable for c in fresh)
+    # A radio group that reports no selection although its style supports a
+    # check state means the engine keeps the switch in the model, not in the
+    # widget (HumMod does exactly this) - say so instead of claiming "off".
+    if raw:
+        readable = True
+    elif not style_ok:
+        readable = False
+    else:
+        readable = None
+    out = {"ok": True,
+           "pressed": f"{panel_path} radio[{radios.index(target)}]"
+                      + (f" ({value})" if value else ""),
+           "count": len(radios),
+           "state_readable": readable,
+           "checked": raw if readable is True else None}
+    if readable is not True:
+        out["note"] = ("the widget does not expose its check state (the engine keeps "
+                       "the switch in the model); pass probe_vars to verify the effect "
+                       "on model variables")
+    if probe_vars:
+        out["probe_values"] = _probe_model(b, p, probe_vars)
+    return json.dumps(out)
+
+
+def _probe_model(b: Bridge, p: Profile, probe_vars: list[str]) -> dict:
+    """Export the current state and read the given model variables back."""
+    os.makedirs(OUTDIR, exist_ok=True)
+    name = "_probe_" + datetime.now().strftime("%H%M%S%f")
+    path = _export_snapshot(b, p, name)
+    want = {v.lower() for v in probe_vars}
+    vals = parse_export(path, want)
+    return {k: vals[k] for k in vals}
 
 
 @server.tool()
@@ -483,11 +872,8 @@ def _parent_of(hwnd: int) -> int:
     return user32.GetParent(hwnd)
 
 
-@server.tool()
-@safe
-def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default") -> str:
-    """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables. Returns path + values (System.X = sim time on HumMod)."""
-    b, p = get_bridge(engine)
+def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
+    """Export the engine state (HumMod .SOL / QCP .ICS) into OUTDIR; return the path."""
     os.makedirs(OUTDIR, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
     save_id = p.file.get("save_sol")
@@ -505,20 +891,39 @@ def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "def
         if os.path.exists(path):
             path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
         b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+    return path
+
+
+@server.tool()
+@safe
+def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default") -> str:
+    """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables. Returns path + values (System.X = sim time on HumMod).
+
+    Requested names that do not exist in the model are listed under 'missing'
+    instead of being silently dropped."""
+    b, p = get_bridge(engine)
+    path = _export_snapshot(b, p, name)
     want = {v.lower() for v in (vars or [])}
     if not want and p.file.get("save_sol") is not None:
         want = {"system.x"}  # default sim-time probe for HumMod SOLs
     vals = parse_export(path, want or None)
-    return json.dumps({"ok": True, "path": path, "values": vals})
+    have = {k.lower() for k in vals}
+    missing = [v for v in (vars or []) if v.lower() not in have]
+    return json.dumps({"ok": True, "path": path, "values": vals, "missing": missing})
 
 
 @server.tool()
 @safe
 def hummod_get_vars(sol_path: str, names: list[str]) -> str:
-    """Read current (last sample) variable values from a .SOL file, e.g. 'BloodVol.Vol'. Returns {values, missing}."""
+    """Read current (last sample) variable values from an exported file.
+
+    HumMod exports .SOL (XML) and QCP exports .ICS (text key-value); the
+    format is detected from the file head, so both work here.
+    Returns {values, missing}."""
     want = {n.lower() for n in names}
-    vals = parse_sol(sol_path, want)
-    return json.dumps({"values": vals, "missing": [n for n in names if n.lower() not in vals]})
+    vals = parse_export(sol_path, want)
+    have = {k.lower() for k in vals}
+    return json.dumps({"values": vals, "missing": [n for n in names if n.lower() not in have]})
 
 
 @server.tool()

@@ -23,11 +23,37 @@ from dataclasses import dataclass, field
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
+# SendMessageW takes a pointer lParam (e.g. LB_GETTEXT's buffer); without
+# explicit argtypes ctypes truncates it to a 32-bit int on 64-bit Python.
+user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint,
+                               ctypes.c_size_t, ctypes.c_size_t]
+user32.SendMessageW.restype = ctypes.c_ssize_t
+
+# 64-bit safe handle handling: without explicit restypes ctypes truncates
+# kernel handles to 32 bits, which breaks OpenProcess/CloseHandle.
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.TerminateProcess.restype = wintypes.BOOL
+kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                                wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+
 WM_CLOSE = 0x0010
 WM_SETTEXT = 0x000C
 WM_COMMAND = 0x0111
 WM_HSCROLL = 0x0114
+WM_NULL = 0x0000
 BM_CLICK = 0x00F5
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_RBUTTONUP = 0x0205
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDBLCLK = 0x0203
 
 MF_BYCOMMAND = 0x0000
 MF_BYPOSITION = 0x0400
@@ -36,6 +62,8 @@ MFS_MASK = 0x0003  # MFS_GRAYED | MFS_DISABLED
 SB_THUMBPOSITION = 4
 SB_ENDSCROLL = 8
 WM_GETTEXT = 0x000D
+BM_GETCHECK = 0x00F0   # read the check state (BM_SETCHECK is 0x00F1)
+BM_SETCHECK = 0x00F1
 
 
 @dataclass
@@ -72,6 +100,30 @@ class Control:
     @property
     def is_push(self) -> bool:
         return (self.style & 0x0F) in (0x00, 0x01, 0x03)
+
+    # BS_* type bits (style & 0x0F)
+    BTN_TYPES = {0x00: "push", 0x01: "push-default", 0x02: "checkbox",
+                 0x03: "auto-checkbox", 0x04: "radio", 0x05: "3state",
+                 0x06: "auto-3state", 0x07: "groupbox", 0x08: "groupbox",
+                 0x09: "auto-radio", 0x0A: "multi-choice", 0x0B: "ownerdraw",
+                 0x0C: "groupbox", 0x0D: "groupbox", 0x0E: "groupbox",
+                 0x0F: "ownerdraw-radio"}
+
+    @property
+    def button_type(self) -> str:
+        """Human name of the BS_* style bits (style & 0x0F)."""
+        return self.BTN_TYPES.get(self.style & 0x0F, f"type-0x{self.style & 0x0F:02X}")
+
+    @property
+    def check_state_readable(self) -> bool:
+        """Whether BM_GETCHECK returns the real selection for this control.
+
+        Windows only keeps a check state for the standard box/radio styles.
+        Owner-drawn buttons (BS_OWNERDRAW / BS_OWNERDWRADIOBUTTON) keep the
+        state in the application, so BM_GETCHECK always answers 0 and a
+        post-click readback is meaningless.
+        """
+        return (self.style & 0x0F) in (0x02, 0x03, 0x04, 0x05, 0x06, 0x09)
 
 
 @dataclass
@@ -298,7 +350,9 @@ class Bridge:
             user32.GetScrollRange(hwnd, 0, ctypes.byref(rng[0]), ctypes.byref(rng[1]))
             mn, mx = rng[0].value, rng[1].value
         if cls == "Button":
-            check = user32.SendMessageW(hwnd, 0x00F1, 0, 0)  # BM_GETCHECK
+            # BM_GETCHECK is 0x00F0; 0x00F1 is BM_SETCHECK - reading with it
+            # would *write* (un-check) the control and report 0 every time.
+            check = user32.SendMessageW(hwnd, BM_GETCHECK, 0, 0)
         return Control(hwnd=hwnd, ctrl_id=user32.GetDlgCtrlID(hwnd), cls=cls,
                        text=tb.value, visible=bool(user32.IsWindowVisible(hwnd)),
                        enabled=bool(user32.IsWindowEnabled(hwnd)),
@@ -374,33 +428,401 @@ class Bridge:
             raise RuntimeError("engine still blocked by a modal dialog")
         return dismissed
 
-    def wait_idle(self, stop_cmd_id: int, timeout: float = 600.0,
-                  start_grace: float = 8.0) -> float:
-        """Poll until the Stop menu item grays out (simulation finished).
+    _BUSY_WORDS = ("solv", "running", "calculat", "integrat", "simulat", "step")
 
-        Two phases, because some engines (QCP) keep Stop grayed even when idle:
-        1. wait for Stop to become *enabled* (simulation actually started) within
-           start_grace; if it never enables, the command was a no-op / already idle
-        2. wait for Stop to gray again = finished
+    def solving(self) -> bool:
+        """True while the engine reports an unfinished run in its status bar.
+
+        HumMod writes "Solving ..." while the model integrates and appends
+        "Done" when it finishes.  This is the only reliable signal on 3.0.4:
+        the Stop menu item can stay gray while the model runs, and the UI
+        thread keeps answering messages.
+        """
+        t = self.status_text().strip().lower()
+        if not t:
+            return False
+        if t.endswith("done"):
+            return False
+        return any(w in t for w in self._BUSY_WORDS)
+
+    def wait_idle(self, stop_cmd_id: int, timeout: float = 600.0,
+                  start_grace: float = 8.0,
+                  before_status: str | None = None) -> dict:
+        """Wait until the simulation has really finished.
+
+        HumMod 3.0.4 keeps the Stop menu item gray while the model is solving
+        and keeps answering window messages, so neither can detect "running".
+        The status bar is the reliable signal ("Solving ..." -> "Solving ... Done").
+
+        Returns {"started": bool, "elapsed": float, "signal": str}.
         """
         t0 = time.time()
-        time.sleep(0.4)
+        deadline = t0 + timeout
+        before = self.status_text() if before_status is None else before_status
         started = False
+        signal = "none"
+        # phase 1 - catch the run starting
         while time.time() - t0 < start_grace:
-            if self.menu_item_enabled(stop_cmd_id):
-                started = True
+            if self.solving():
+                started, signal = True, "status-text"
                 break
-            time.sleep(0.2)
+            if self.menu_item_enabled(stop_cmd_id):
+                started, signal = True, "stop-enabled"
+                break
+            time.sleep(0.05)
         if not started:
-            return time.time() - t0  # never started: treat as idle
-        while time.time() - t0 < timeout:
-            if not self.menu_item_enabled(stop_cmd_id):
-                return time.time() - t0
-            time.sleep(0.3)
+            # the run may have been too short to observe; the status bar still
+            # shows that something ran and finished
+            now = self.status_text()
+            if now and now != before and now.strip().lower().endswith("done"):
+                started, signal = True, "status-text-fast"
+        # phase 2 - wait for it to finish
+        while time.time() < deadline:
+            if not self.solving():
+                time.sleep(0.2)          # confirm: a solver pause is not the end
+                if not self.solving():
+                    return {"started": started, "elapsed": time.time() - t0, "signal": signal}
+            time.sleep(0.05)
         raise TimeoutError(f"simulation did not finish within {timeout}s")
+
+    def terminate(self, grace: float = 6.0) -> bool:
+        """Close the engine process so a fresh one can reload the model XML.
+
+        Sends WM_CLOSE first (lets the engine shut down cleanly); if the window
+        is still up after `grace` seconds the process is terminated.
+        """
+        if not self.main:
+            return False
+        user32.PostMessageW(self.main, WM_CLOSE, 0, 0)
+        deadline = time.time() + grace
+        while time.time() < deadline:
+            if not user32.IsWindow(self.main):
+                return True
+            time.sleep(0.2)
+        handle = kernel32.OpenProcess(0x0001 | 0x0400, False, self.pid)  # TERMINATE|SYNCHRONIZE
+        if handle:
+            kernel32.TerminateProcess(handle, 0)
+            kernel32.CloseHandle(handle)
+        # wait for the process itself to exit - the window handle can outlive
+        # it briefly, and a second engine in the same folder breaks attach()
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            h = kernel32.OpenProcess(0x1000, False, self.pid)  # SYNCHRONIZE
+            if not h:
+                return True
+            code = wintypes.DWORD()
+            kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+            kernel32.CloseHandle(h)
+            if code.value != 259:  # STILL_ACTIVE
+                return True
+            time.sleep(0.2)
+        return False
 
     def busy(self) -> bool:
         return not bool(user32.IsWindowEnabled(self.main))
+
+    def ui_responsive(self, timeout_ms: int = 400) -> bool:
+        """True when the engine's UI thread still answers messages.
+
+        HumMod solves the model on the UI thread, so while a run is in progress
+        the window stops pumping messages.  A WM_NULL probe with a timeout is
+        the only reliable "is the engine still working?" signal - the Stop menu
+        item stays gray on 3.0.4 even while the model is solving.
+        """
+        res = ctypes.c_size_t()
+        return user32.SendMessageTimeoutW(self.main, WM_NULL, 0, 0,
+                                           0x0002, timeout_ms, ctypes.byref(res)) != 0
+
+    def status_text(self) -> str:
+        """Text of the engine's status bar (progress messages live there)."""
+        out = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def on_child(hwnd, _l):
+            buf = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, buf, 64)
+            if buf.value.startswith("msctls_statusbar"):
+                tb = ctypes.create_unicode_buffer(1024)
+                res = ctypes.c_size_t()
+                if user32.SendMessageTimeoutW(hwnd, WM_GETTEXT, 1024, tb,
+                                              0x0002, 1500, ctypes.byref(res)):
+                    out.append(tb.value.strip())
+                return False
+            return True
+
+        user32.EnumChildWindows(self.main, on_child, 0)
+        return out[0] if out else ""
+
+    # ---------- window state ----------
+
+    SW_RESTORE = 9
+    SW_SHOW = 5
+    SW_HIDE = 0
+
+    def window_rect(self) -> tuple[int, int, int, int]:
+        r = wintypes.RECT()
+        user32.GetWindowRect(self.main, ctypes.byref(r))
+        return (r.left, r.top, r.right, r.bottom)
+
+    def is_minimized(self) -> bool:
+        return bool(user32.IsIconic(self.main))
+
+    def restore_window(self) -> None:
+        """Bring the engine window back to a usable size.
+
+        Engines launched hidden (or minimised by the WM) still paint their
+        panels, but mouse/keyboard input and window-relative screenshots need
+        a real, restored window.
+        """
+        was_hidden = not user32.IsWindowVisible(self.main)
+        if self.is_minimized():
+            user32.ShowWindow(self.main, self.SW_RESTORE)
+        elif was_hidden:
+            user32.ShowWindow(self.main, self.SW_SHOW)
+        if was_hidden or self.is_minimized():
+            # only steal focus when we really had to bring the window back;
+            # foregrounding an already visible window hides modeless dialogs
+            user32.SetForegroundWindow(self.main)
+            time.sleep(0.3)
+
+    def client_origin(self) -> tuple[int, int]:
+        """Client-area origin expressed in window coordinates."""
+        pt = wintypes.POINT(0, 0)
+        user32.ClientToScreen(self.main, ctypes.byref(pt))
+        l, t, _, _ = self.window_rect()
+        return (pt.x - l, pt.y - t)
+
+    # ---------- capture ----------
+
+    def capture_png(self, path: str) -> tuple[int, int]:
+        """Save a PNG of the engine window (PrintWindow, falls back to BitBlt).
+
+        Canvas-drawn engines have no widget tree, so a picture is the only way
+        an agent can see what is on screen.
+        """
+        import struct
+        import zlib
+
+        l, t, r, b = self.window_rect()
+        w, h = r - l, b - t
+        if w <= 0 or h <= 0:
+            raise RuntimeError("engine window has no size")
+        gdi = ctypes.windll.gdi32
+        hdc = user32.GetWindowDC(self.main)
+        mdc = gdi.CreateCompatibleDC(hdc)
+        bmp = gdi.CreateCompatibleBitmap(hdc, w, h)
+        gdi.SelectObject(mdc, bmp)
+        try:
+            ok = user32.PrintWindow(self.main, mdc, 2)  # PW_RENDERFULLCONTENT
+            if not ok:
+                gdi.BitBlt(mdc, 0, 0, w, h, hdc, 0, 0, 0x00CC0020)
+            class BIH(ctypes.Structure):
+                _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                            ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                            ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                            ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                            ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                            ("biClrImportant", wintypes.DWORD)]
+            bi = BIH()
+            bi.biSize = ctypes.sizeof(BIH)
+            bi.biWidth = w
+            bi.biHeight = -h
+            bi.biPlanes = 1
+            bi.biBitCount = 32
+            bi.biCompression = 0
+            buf = ctypes.create_string_buffer(w * h * 4)
+            if not gdi.GetDIBits(mdc, bmp, 0, h, buf, ctypes.byref(bi), 0):
+                raise RuntimeError("GetDIBits failed")
+            raw = buf.raw
+            # BGRX -> RGB
+            rgb = bytearray(w * h * 3)
+            for i in range(w * h):
+                rgb[3 * i] = raw[4 * i + 2]
+                rgb[3 * i + 1] = raw[4 * i + 1]
+                rgb[3 * i + 2] = raw[4 * i]
+            png = self._png_bytes(w, h, bytes(rgb))
+            with open(path, "wb") as f:
+                f.write(png)
+            return (w, h)
+        finally:
+            gdi.DeleteObject(bmp)
+            gdi.DeleteDC(mdc)
+            user32.ReleaseDC(self.main, hdc)
+
+    @staticmethod
+    def _png_bytes(width: int, height: int, rgb: bytes) -> bytes:
+        """Minimal PNG writer (stdlib only - no Pillow dependency)."""
+        import struct
+        import zlib
+        stride = width * 3
+        raw = bytearray()
+        for y in range(height):
+            raw.append(0)
+            raw += rgb[y * stride:(y + 1) * stride]
+
+        def chunk(typ: bytes, data: bytes) -> bytes:
+            return (struct.pack(">I", len(data)) + typ + data
+                    + struct.pack(">I", zlib.crc32(typ + data) & 0xffffffff))
+
+        return (b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+                + chunk(b"IEND", b""))
+
+    # ---------- pointer ----------
+
+    def click(self, x: int, y: int, button: str = "left", double: bool = False,
+              method: str = "message") -> dict:
+        """Click at window-relative (x, y).
+
+        method='message' posts WM_LBUTTON*/WM_RBUTTON* to the window, which
+        works for owner-drawn canvases without moving the physical mouse.
+        method='mouse' moves the real cursor (needs a foreground window).
+        """
+        ox, oy = self.client_origin()
+        cx, cy = x - ox, y - oy
+        down, up = (WM_LBUTTONDOWN, WM_LBUTTONUP) if button == "left" else (WM_RBUTTONDOWN, WM_RBUTTONUP)
+        lparam = (cy << 16) | (cx & 0xFFFF)
+        wparam = 1 if button == "left" else 2
+        if method == "mouse":
+            l, t, _, _ = self.window_rect()
+            user32.SetCursorPos(l + x, t + y)
+            time.sleep(0.05)
+            user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
+            time.sleep(0.05)
+            user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+        else:
+            self.ensure_ready()
+            user32.SendMessageW(self.main, WM_MOUSEMOVE, 0, lparam)
+            user32.SendMessageW(self.main, down, wparam, lparam)
+            time.sleep(0.03)
+            user32.SendMessageW(self.main, up, 0, lparam)
+            if double:
+                user32.SendMessageW(self.main, WM_LBUTTONDBLCLK, wparam, lparam)
+        time.sleep(0.15)
+        return {"window_xy": [x, y], "client_xy": [cx, cy], "method": method}
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int, steps: int = 20) -> dict:
+        """Press at (x1,y1), move to (x2,y2), release - for canvas slidebars."""
+        ox, oy = self.client_origin()
+        cx1, cy1 = x1 - ox, y1 - oy
+        cx2, cy2 = x2 - ox, y2 - oy
+        lp1 = (cy1 << 16) | (cx1 & 0xFFFF)
+        lp2 = (cy2 << 16) | (cx2 & 0xFFFF)
+        self.ensure_ready()
+        user32.SendMessageW(self.main, WM_MOUSEMOVE, 0, lp1)
+        user32.SendMessageW(self.main, WM_LBUTTONDOWN, 1, lp1)
+        for i in range(1, steps + 1):
+            x = cx1 + (cx2 - cx1) * i // steps
+            y = cy1 + (cy2 - cy1) * i // steps
+            user32.SendMessageW(self.main, WM_MOUSEMOVE, 1, (y << 16) | (x & 0xFFFF))
+            time.sleep(0.02)
+        user32.SendMessageW(self.main, WM_LBUTTONUP, 0, lp2)
+        time.sleep(0.15)
+        return {"from": [x1, y1], "to": [x2, y2], "client_from": [cx1, cy1]}
+
+    # ---------- popup menus ----------
+
+    def popup_menus(self) -> list[dict]:
+        """Enumerate visible popup menus (#32768) and their items.
+
+        TrackPopupMenu creates a class '#32768' window that owns the menu, so
+        the items can be read (and their command ids reused) while it is open.
+        """
+        out: list[dict] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def on_window(hwnd, _l):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == self.pid and user32.IsWindowVisible(hwnd):
+                buf = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(hwnd, buf, 64)
+                if buf.value == "#32768":
+                    hmenu = user32.GetMenu(hwnd)
+                    items = []
+                    if hmenu:
+                        n = user32.GetMenuItemCount(hmenu)
+                        for i in range(n):
+                            ib = ctypes.create_unicode_buffer(256)
+                            user32.GetMenuStringW(hmenu, i, ib, 256, MF_BYPOSITION)
+                            state = user32.GetMenuState(hmenu, i, MF_BYPOSITION)
+                            cid = user32.GetMenuItemID(hmenu, i)
+                            items.append({"label": ib.value.replace("&", ""),
+                                          "id": int(cid) & 0xFFFF if cid not in (0xFFFFFFFF, -1) else None,
+                                          "enabled": (state & MFS_MASK) == 0})
+                    out.append({"hwnd": hex(hwnd), "menu": hex(hmenu) if hmenu else None,
+                                "items": items})
+            return True
+
+        user32.EnumWindows(on_window, 0)
+        return out
+
+    # ---------- list boxes / dialog widgets ----------
+
+    LB_GETCOUNT = 0x018B
+    LB_GETTEXT = 0x0189
+    LB_GETCURSEL = 0x0188
+    LB_SETCURSEL = 0x0186
+    LBN_SELCHANGE = 1
+
+    def listbox_items(self, hwnd: int) -> list[str]:
+        """Read every item of a list box (standard control, text marshalled)."""
+        cnt = user32.SendMessageW(hwnd, self.LB_GETCOUNT, 0, 0)
+        out: list[str] = []
+        for i in range(cnt):
+            buf = ctypes.create_unicode_buffer(2048)
+            user32.SendMessageW(hwnd, self.LB_GETTEXT, i,
+                                ctypes.addressof(buf))
+            out.append(buf.value)
+        return out
+
+    def listbox_selected(self, hwnd: int) -> int:
+        return user32.SendMessageW(hwnd, self.LB_GETCURSEL, 0, 0)
+
+    def listbox_select(self, hwnd: int, index: int) -> dict:
+        """Select an item and notify the parent (LBN_SELCHANGE), so the app
+        refreshes whatever depends on that list."""
+        ok = user32.SendMessageW(hwnd, self.LB_SETCURSEL, index, 0)
+        parent = user32.GetParent(hwnd)
+        cid = user32.GetDlgCtrlID(hwnd)
+        wparam = (self.LBN_SELCHANGE << 16) | (cid & 0xFFFF)
+        user32.SendMessageW(parent, WM_COMMAND, wparam, hwnd)
+        time.sleep(0.15)
+        return {"selected": index, "set": bool(ok),
+                "current": self.listbox_selected(hwnd)}
+
+    def dialog_by_title(self, needle: str) -> int | None:
+        """Find a visible #32770 dialog whose title contains `needle`."""
+        needle = needle.lower()
+        for d in self._visible_dialogs():
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(d, buf, 256)
+            if needle in buf.value.lower():
+                return d
+        return None
+
+    def dialog_with_text(self, needle: str) -> int | None:
+        """Find a visible #32770 dialog that *contains* a control with this text.
+
+        Some engines reuse the app title for their dialogs and mark them only
+        with a static caption, so the title alone is not a reliable key.
+        """
+        needle = needle.lower()
+        for d in self._visible_dialogs():
+            for k in self._dialog_children(d):
+                if needle in k.text.strip().lower():
+                    return d
+        return None
+
+    def press_dialog_button(self, dlg: int, caption: str) -> bool:
+        """Press a dialog button by its caption."""
+        for k in self._dialog_children(dlg):
+            if k.cls == "Button" and k.text.strip().lower() == caption.strip().lower():
+                self.press(k.hwnd)
+                time.sleep(0.2)
+                return True
+        return False
 
     # ---------- dialogs ----------
 
