@@ -16,12 +16,16 @@
   ],
   "stop_cmd_id": 6,
   "quirks": {
-    "slider_commits": false,
-    "slider_note": "THUMBPOSITION+ENDSCROLL moves the thumb but the model value does not commit; set initial conditions via model XML <parm> edits (GPL-2.0) and Restart.",
+    "slider_commits": "partial",
+    "slider_note": "3.0.4 slider commit is per-widget unreliable, always verify via snapshot: COMMIT OK = Exercise-Treadmill Speed (value = raw_pos x 0.5 MPH, raw>100 accepted), Lifestyle/Environment Wind (value = raw_pos MPH) and Ambient Temperature (value = raw_pos - 30 degF, so 100 degF needs raw pos 130; the nominal 0-100 range only covers -30..70 degF), DietGoalH2O Rate (0..2 L/Day). SILENTLY IGNORES most positions = Lifestyle/Exercise/Treadmill Grade (only raw 0 -> 0% and 50 -> 15% committed in 10 attempts; two-step zero-then-target does not help) - set Grade via model XML <parm> when a specific value is needed. Hemorrhage rate slider (earlier batches) does not commit either.",
     "epo_computed": false,
-    "epo_note": "EPO stays at its initial value on this build (known engine limitation).",
+    "epo_note": "EPO stays at its initial value on this build (known engine limitation); Hormones/EPO pools are frozen, so EPO-driven erythropoiesis acceleration is N/A. The separate [EPO]Delay.Effect structure only follows the frozen EPOPool.Log10Conc (settles ~0.975), so recovery after restoring secretion runs at ~0.975 x Base.",
     "model_noise": true,
-    "model_noise_note": "Random terms: repeated runs agree exactly at restart, then diverge within ~2.75% on noise-sensitive rates."
+    "model_noise_note": "Random terms: repeated runs agree exactly at restart, then diverge within ~2.75% on noise-sensitive rates. Two identical protocol runs from a fresh process start reproduced month-1/month-2 anemia values bit-for-bit in field trial batch 3.",
+    "exercise_exhaustion": "Exercise-Control 'Wrapup' stops the subject automatically (Request->0) when SkeletalMuscle-Ph.Ph <= Exercise-Motivation.Motivation (6.65), SkeletalMuscle/RespiratoryMuscle Function.Failed, or Brain-Function Comatose/Impaired. Duration/distance: Exercise-Treadmill.ElapsedTime (Min) / Distance(Miles).",
+    "viscosity_clamp_flaky": "The Body Fluids/Blood/Viscosity Clamp radio sometimes gets reverted by the engine at the next Go run after being pressed while idle (observed once). Re-press and verify Viscosity.Clamp via snapshot before starting long runs.",
+    "ics_dialog": "File>Save/Load Initial Conditions opens the Vista IFileDialog (title '另存为'/'打开'): filename Edit id 1001, Save/Open button id 1, Cancel id 2; the address bar remembers the last-used directory (the MCP OUTDIR after any hummod_snapshot). hummod_save_ics / hummod_load_ics (added 2026-11, branch field/hummod-anemia) drive it with an explicit path.",
+    "status_bar_progress": "While solving, the status bar shows 'Solving ...' then '... Done'; on this build the Stop menu item becomes ENABLED during the run (contrary to older notes). hummod_busy may report busy=false mid-run because the UI thread stays responsive - trust the status text."
   },
   "page_ids": {
     "Trauma/Hemorrhage": 741,
@@ -47,6 +51,39 @@
     "Trauma/Ventricular Fibrillation": {
       "off": 0,
       "on": 1
+    },
+    "Body Fluids/Blood/Red Cells/Secretion": {
+      "clamp off (rate = Base x [EPO]Delay)": 0,
+      "clamp on (rate = ClampSetting, default 0 = erythropoiesis stopped)": 1
+    },
+    "Body Fluids/Blood/Viscosity": {
+      "clamp off (value = HctOnVisc[Hct])": 0,
+      "clamp on (value = Level; pre-set Level via XML, default 0.0 is degenerate)": 1
+    },
+    "Lifestyle/Posture": {
+      "restraint none": 0,
+      "restraint lying": 1,
+      "restraint sitting": 2,
+      "restraint standing": 3,
+      "restraint tilting": 4,
+      "request lying": 5,
+      "request sitting": 6,
+      "request standing": 7
+    },
+    "Lifestyle/Exercise/Control": {
+      "rest": 0,
+      "bike": 1,
+      "treadmill": 2
+    },
+    "Lifestyle/Exercise/Treadmill": {
+      "walk": 0,
+      "run": 1
+    },
+    "Lifestyle/Diet/Control": {
+      "thirst + appetite": 0,
+      "fixed nutrition": 1,
+      "(no model change observed)": 2,
+      "fixed water (intake = DietGoalH2O.Rate(L/Day))": 3
     }
   },
   "action_semantics": {

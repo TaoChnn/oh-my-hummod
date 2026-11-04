@@ -1061,6 +1061,48 @@ def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "def
 
 @server.tool()
 @safe
+def hummod_save_ics(name: str, engine: str = "default") -> str:
+    """Save Initial Conditions (.ICS) via File > Save Initial Conditions.
+
+    Unlike hummod_snapshot (which always exports the .SOL solution on HumMod),
+    this drives the engine's own ICs save, so the file can later be reloaded
+    with hummod_load_ics to restore the exact scenario. The file is written to
+    the MCP output dir as <name>.ICS."""
+    b, p = get_bridge(engine)
+    os.makedirs(OUTDIR, exist_ok=True)
+    save_id = p.file.get("save_ics")
+    if save_id is None:
+        save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+    path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
+    if os.path.exists(path):
+        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
+    b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+    return json.dumps({"ok": True, "path": path})
+
+
+@server.tool()
+@safe
+def hummod_load_ics(path: str, engine: str = "default") -> str:
+    """Load Initial Conditions (.ICS) via File > Load Initial Conditions.
+
+    `path` may be absolute or a file name inside the MCP output dir. Restores
+    the scenario previously stored with hummod_save_ics. Note: on HumMod a
+    subsequent in-memory Restart returns to the model defaults, NOT to the
+    loaded ICs - reload explicitly when needed."""
+    b, p = get_bridge(engine)
+    cand = path if os.path.isabs(path) else os.path.join(OUTDIR, path)
+    if not os.path.exists(cand) and not cand.lower().endswith(".ics") and os.path.exists(cand + ".ICS"):
+        cand += ".ICS"
+    load_id = p.file.get("load_ics")
+    if load_id is None:
+        load_id = b.menu_tree().walk("File/Load Initial Conditions").cmd_id
+    b.load_file_dialog(load_id, cand, tuple(p.dialog_edit_ids))
+    return json.dumps({"ok": True, "path": cand})
+
+
+@server.tool()
+@safe
 def hummod_get_vars(sol_path: str, names: list[str]) -> str:
     """Read current (last sample) variable values from an exported file.
 

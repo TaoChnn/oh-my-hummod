@@ -26,6 +26,7 @@ async def main():
                 return " | ".join(c.text for c in res.content if getattr(c, "text", None))
 
             print("[profile]", await call("hummod_profile"))
+            print("[start]  ", await call("hummod_start"))
             print("[status] ", await call("hummod_status"))
             print("[nav]    ", await call("hummod_navigate", {"panel_path": "Trauma/Hemorrhage"}))
             print("[radio]  ", await call("hummod_radio", {"panel_path": "Trauma/Hemorrhage",

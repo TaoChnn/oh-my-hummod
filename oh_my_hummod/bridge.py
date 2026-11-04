@@ -1014,6 +1014,50 @@ class Bridge:
             time.sleep(0.1)
         raise RuntimeError("export did not complete; inspect the engine")
 
+    def load_file_dialog(self, command_id: int, target_path: str,
+                         edit_ids: tuple[int, ...] = (1001, 1148),
+                         timeout: float = 60.0) -> None:
+        """Trigger File > Load Solution/ICs and drive the native Open dialog.
+
+        Same mechanics as save_file_dialog, but the target file must already
+        exist (it is only typed into the dialog, never written), and completion
+        is "the dialog closed and the engine is idle again" - the engine does
+        not write a file when loading."""
+        import os
+        target_path = os.path.abspath(target_path)
+        if not os.path.exists(target_path):
+            raise FileNotFoundError(f"no such file to load: {target_path}")
+        self.ensure_ready()
+        if self.busy():
+            raise RuntimeError("engine busy or modal is open")
+        user32.PostMessageW(self.main, WM_COMMAND, command_id, 0)
+        dlg = self._wait_dialog(timeout)
+        edit = button = None
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            dialogs = self._visible_dialogs()
+            if len(dialogs) == 1:
+                dlg = dialogs[0]
+                kids = self._dialog_children(dlg)
+                edits = [k for k in kids if k.cls == "Edit" and k.ctrl_id in edit_ids and k.visible]
+                buttons = [k for k in kids if k.cls == "Button" and k.ctrl_id == 1 and k.visible and k.enabled]
+                if len(edits) == 1 and len(buttons) == 1:
+                    edit, button = edits[0], buttons[0]
+                    break
+            time.sleep(0.05)
+        if edit is None or button is None:
+            raise RuntimeError("unrecognized file dialog; inspect the engine")
+        self.set_text(edit.hwnd, target_path)
+        user32.PostMessageW(button.hwnd, BM_CLICK, 0, 0)
+        # the Open dialog closes as soon as the engine accepts the file; wait
+        # for it to disappear and the engine UI to settle
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self._visible_dialogs() and not self.busy():
+                return
+            time.sleep(0.1)
+        raise RuntimeError("load did not complete; inspect the engine")
+
     def _visible_dialogs(self) -> list[int]:
         out: list[int] = []
 
