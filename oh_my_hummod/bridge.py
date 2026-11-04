@@ -894,7 +894,7 @@ class Bridge:
             })
         return out
 
-    def dismiss_modals(self, prefer: int = 6) -> list[int]:
+    def dismiss_modals(self, prefer: int = 6, max_passes: int = 40) -> list[int]:
         """Close every modal dialog the engine has open.
 
         `prefer` is the button id to click when the dialog offers it
@@ -903,21 +903,27 @@ class Bridge:
         Returns the handles that were found (whether or not they closed).
         """
         found: list[int] = []
-        for d in self._visible_dialogs():
-            found.append(d)
-            buttons = [c for c in self._dialog_children(d) if c.cls == "Button"]
-            target = self.pick_dialog_button(buttons, prefer)
-            if target is not None:
-                user32.PostMessageW(target.hwnd, BM_CLICK, 0, 0)
-                time.sleep(0.2)
-            if d in self._visible_dialogs():
-                # BM_CLICK did not take - drive the dialog with WM_COMMAND.
-                user32.PostMessageW(d, WM_COMMAND,
-                                    target.ctrl_id if target else 1, 0)
-                time.sleep(0.15)
-            if d in self._visible_dialogs():
-                user32.PostMessageW(d, WM_CLOSE, 0, 0)
-                time.sleep(0.15)
+        # QCP raises event dialogs in cascades: answering one immediately
+        # raises the next ("V-Fib" -> "not conscious" -> "not breathing" -> ...).
+        # Keep answering until the engine is free again.
+        for _ in range(max_passes):
+            if not self._visible_dialogs():
+                break
+            for d in self._visible_dialogs():
+                found.append(d)
+                buttons = [c for c in self._dialog_children(d) if c.cls == "Button"]
+                target = self.pick_dialog_button(buttons, prefer)
+                if target is not None:
+                    user32.PostMessageW(target.hwnd, BM_CLICK, 0, 0)
+                    time.sleep(0.2)
+                if d in self._visible_dialogs():
+                    # BM_CLICK did not take - drive the dialog with WM_COMMAND.
+                    user32.PostMessageW(d, WM_COMMAND,
+                                        target.ctrl_id if target else 1, 0)
+                    time.sleep(0.15)
+                if d in self._visible_dialogs():
+                    user32.PostMessageW(d, WM_CLOSE, 0, 0)
+                    time.sleep(0.15)
         # final hard pass: anything still open gets a synchronous WM_CLOSE
         still = [h for h in self._visible_dialogs() if h in found]
         for d in still:
