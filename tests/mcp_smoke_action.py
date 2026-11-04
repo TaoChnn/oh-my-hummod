@@ -7,7 +7,7 @@ import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SERVER = r"C:/path/to\oh-my-hummod\oh_my_hummod\server.py"
+SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "oh_my_hummod", "server.py")
 SOL = r"C:/path/to/out\mcp_new\vf_action.SOL"
 
 
