@@ -235,7 +235,7 @@ def hummod_start(key: str = "default", hidden: bool = True) -> str:
     """
     if key not in _ENGINES:
         raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
-    if key in _bridges and _bridges[key][0].main:
+    if key in _bridges and _bridges[key][0].main and user32.IsWindow(_bridges[key][0].main):
         return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
     b = Bridge(_ENGINES[key])  # exe name discovered from the folder
     pid = b.start(hidden=hidden)
@@ -541,11 +541,16 @@ def hummod_busy(engine: str = "default") -> str:
     if stop_id is None:
         stop_id = b.menu_tree().find("Stop").cmd_id
     responsive = b.ui_responsive(500)
+    stop_enabled = bool(b.menu_item_enabled(stop_id))
+    text = b.status_text() or ""
+    # 3.0.4 field trial: the UI thread stays responsive while the model runs,
+    # so "not responsive" alone misses whole runs - weight the other signals.
+    solving = "solving" in text.lower() and "done" not in text.lower()
     return json.dumps({"ok": True,
-                       "busy": not responsive,
+                       "busy": (not responsive) or solving or stop_enabled,
                        "ui_responsive": responsive,
-                       "stop_enabled": bool(b.menu_item_enabled(stop_id)),
-                       "status_text": b.status_text()})
+                       "stop_enabled": stop_enabled,
+                       "status_text": text})
 
 
 def _sim_time(b: Bridge, p: Profile) -> float | None:
@@ -1074,6 +1079,48 @@ def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "def
     have = {k.lower() for k in vals}
     missing = [v for v in (vars or []) if v.lower() not in have]
     return json.dumps({"ok": True, "path": path, "values": vals, "missing": missing})
+
+
+@server.tool()
+@safe
+def hummod_save_ics(name: str, engine: str = "default") -> str:
+    """Save Initial Conditions (.ICS) via File > Save Initial Conditions.
+
+    Unlike hummod_snapshot (which always exports the .SOL solution on HumMod),
+    this drives the engine's own ICs save, so the file can later be reloaded
+    with hummod_load_ics to restore the exact scenario. The file is written to
+    the MCP output dir as <name>.ICS."""
+    b, p = get_bridge(engine)
+    os.makedirs(OUTDIR, exist_ok=True)
+    save_id = p.file.get("save_ics")
+    if save_id is None:
+        save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+    path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
+    if os.path.exists(path):
+        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
+    b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+    return json.dumps({"ok": True, "path": path})
+
+
+@server.tool()
+@safe
+def hummod_load_ics(path: str, engine: str = "default") -> str:
+    """Load Initial Conditions (.ICS) via File > Load Initial Conditions.
+
+    `path` may be absolute or a file name inside the MCP output dir. Restores
+    the scenario previously stored with hummod_save_ics. Note: on HumMod a
+    subsequent in-memory Restart returns to the model defaults, NOT to the
+    loaded ICs - reload explicitly when needed."""
+    b, p = get_bridge(engine)
+    cand = path if os.path.isabs(path) else os.path.join(OUTDIR, path)
+    if not os.path.exists(cand) and not cand.lower().endswith(".ics") and os.path.exists(cand + ".ICS"):
+        cand += ".ICS"
+    load_id = p.file.get("load_ics")
+    if load_id is None:
+        load_id = b.menu_tree().walk("File/Load Initial Conditions").cmd_id
+    b.load_file_dialog(load_id, cand, tuple(p.dialog_edit_ids))
+    return json.dumps({"ok": True, "path": cand})
 
 
 @server.tool()
