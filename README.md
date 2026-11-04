@@ -14,6 +14,50 @@ MCP client ──stdio──> oh-my-hummod server ──Win32 messages──> en
 **Validated engines:** HumMod Clemmer Salt 3.0.4 ✅ · HumMod-BAT ✅ ·
 avphummod (Modular) ✅ · HumMod standalone 1.6.1 ✅ · QCP 2005 ✅ (core)
 
+## One Prompt to Start
+
+Copy this to your local agent (Claude Code / Codex CLI / ZCode, etc.).
+It will clone the repo, read the README, ask you for the few things it
+cannot detect, then install, register and smoke-test the server.
+
+```text
+Please set up the "oh-my-hummod" MCP server for me on this Windows machine.
+
+Repo: https://github.com/TaoChnn/oh-my-hummod.git
+
+First, clone the repo and read its README.md carefully. Follow it, but
+ask me before guessing any of the following local details:
+
+1. Engine directory — where is my HumMod / QCP engine folder?
+   (e.g. C:\HumMod). If I don't know, help me locate the engine EXE.
+2. Engine build — HumMod 3.0.4 / 1.6.1 / HumMod-BAT / avphummod / QCP 2005?
+   If unsure, detect it from the EXE name and confirm with me.
+3. MCP client — Claude Code, Codex CLI, or ZCode? (so you register it
+   in the right config file)
+4. Python — should we use a local venv? Use its absolute python.exe
+   when registering the server.
+5. Export directory — where should .SOL/.ICS exports go?
+   (e.g. C:\hummod-exports, must be writable)
+
+Then:
+1. Create a venv, `pip install -e .` in the repo.
+2. Set HUMMOD_ENGINE_DIR and HUMMOD_OUTDIR.
+3. Run `python tests\engine_smoke.py --engine <engine dir> --profile <profile>`
+   and confirm it prints ENGINE_SMOKE_OK. If it fails, show me the exact
+   command, error output and detected profile before continuing.
+4. Register the MCP server with my client using the venv's absolute
+   python.exe and the env vars above.
+5. Restart the client and verify the hummod tools are listed.
+6. Run a read-only check: `hummod_status` and `hummod_engines`.
+
+Rules:
+- Do not modify engine binaries or model files.
+- Do not run long simulations; a short `hummod_go` or status check is enough.
+- Do not click/drag blindly in the engine window.
+- If any step is ambiguous, ask me instead of guessing.
+- At the end, summarize what you changed and the exact commands you ran.
+```
+
 ## Quick start (fresh Windows machine)
 
 Requirements: **Windows 10/11**, **Python 3.10+**, and an engine folder
