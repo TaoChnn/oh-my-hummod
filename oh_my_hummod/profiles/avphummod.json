@@ -1,8 +1,19 @@
 {
   "name": "avphummod",
-  "exe_names": ["HumMod.EXE"],
-  "file": { "load_ics": 1, "save_ics": 2, "load_sol": 3, "save_sol": 4, "exit": 5 },
-  "dialog_edit_ids": [1001, 1148],
+  "exe_names": [
+    "HumMod.EXE"
+  ],
+  "file": {
+    "load_ics": 1,
+    "save_ics": 2,
+    "load_sol": 3,
+    "save_sol": 4,
+    "exit": 5
+  },
+  "dialog_edit_ids": [
+    1001,
+    1148
+  ],
   "stop_cmd_id": 6,
   "bind_marker": "Sizing",
   "quirks": {
@@ -10,9 +21,21 @@
     "slider_commits": false,
     "model_noise": true
   },
-  "page_ids": { "Trauma/Hemorrhage": 741 },
-  "radio_semantics": {
-    "Trauma/Hemorrhage": { "off": 0, "on": 1 }
+  "page_ids": {
+    "Trauma/Hemorrhage": 741
   },
-  "panels": {}
+  "radio_semantics": {
+    "Trauma/Hemorrhage": {
+      "off": 0,
+      "on": 1
+    }
+  },
+  "panels": {},
+  "menu_aliases": {
+    "Physiology/Lungs/Thorax": "Respiration/Thorax",
+    "Physiology/Lungs/Gas Exchange": "Respiration/Gas Exchange",
+    "Clinic/Hemorrhage": "Trauma/Hemorrhage",
+    "Clinic/Myocardial Infarction": "Trauma/Myocardial Infarction",
+    "Clinic/Pneumothorax": "Trauma/Pneumothorax"
+  }
 }

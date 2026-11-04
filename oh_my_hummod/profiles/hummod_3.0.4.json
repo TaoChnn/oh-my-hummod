@@ -57,5 +57,12 @@
       "0": "Reset Volume"
     }
   },
-  "bind_marker": "Sizing"
+  "bind_marker": "Sizing",
+  "menu_aliases": {
+    "Physiology/Lungs/Thorax": "Respiration/Thorax",
+    "Physiology/Lungs/Gas Exchange": "Respiration/Gas Exchange",
+    "Clinic/Hemorrhage": "Trauma/Hemorrhage",
+    "Clinic/Myocardial Infarction": "Trauma/Myocardial Infarction",
+    "Clinic/Pneumothorax": "Trauma/Pneumothorax"
+  }
 }

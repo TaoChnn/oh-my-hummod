@@ -155,6 +155,10 @@ class Bridge:
         if not exe:
             exes = [f for f in os.listdir(self.engine_dir) if f.lower().endswith(".exe")]
             if len(exes) != 1:
+                pref = [f for f in exes if f.lower() == "hummod.exe"]
+                if len(pref) == 1:
+                    exes = pref  # main binary beats helper EXEs (e.g. Model Navigator.EXE)
+            if len(exes) != 1:
                 raise RuntimeError(f"cannot pick an EXE in {self.engine_dir}: {exes}")
             exe = exes[0]
             self.exe_name = exe
@@ -208,18 +212,30 @@ class Bridge:
         Freshly started engines show only the File..Help row; the model-page row
         (Circulation ... Sizing) is populated when 'Starting Model ... Binding ...
         Done' completes. Poll for the last row's marker label.
+
+        The marker can appear a moment before the page handlers accept commands,
+        so also require the main window to be enabled and settle briefly.
         """
         deadline = time.time() + timeout
         last_count = -1
         while time.time() < deadline:
             tree = self.menu_tree()
             if tree.find(bound_marker) is not None:
-                return
+                break
             if len(tree.children) == last_count and len(tree.children) > 7:
-                return  # count stable above the File..Help row: accept as bound
+                break  # count stable above the File..Help row: accept as bound
             last_count = len(tree.children)
             time.sleep(0.4)
-        raise TimeoutError(f"engine model binding not observed within {timeout}s")
+        else:
+            raise TimeoutError(f"engine model binding not observed within {timeout}s")
+
+        # wait until the engine actually accepts commands (no modal, window enabled)
+        while time.time() < deadline:
+            if not self.busy():
+                break
+            self.dismiss_modals()
+            time.sleep(0.2)
+        time.sleep(0.5)  # settle: page handlers bind just after the menu appears
 
     def _menu_children(self, hmenu: int, node: MenuItem) -> None:
         count = user32.GetMenuItemCount(hmenu)
@@ -295,8 +311,7 @@ class Bridge:
 
     def command(self, cmd_id: int) -> None:
         """Post a top-level menu command (Restart=7, Go durations, ...)."""
-        if not user32.IsWindowEnabled(self.main):
-            raise RuntimeError("engine has an open modal dialog")
+        self.ensure_ready()
         if not user32.PostMessageW(self.main, WM_COMMAND, cmd_id, 0):
             raise RuntimeError("command delivery failed")
 
@@ -306,18 +321,22 @@ class Bridge:
         Older engines may accept the command only after their page handlers
         finish binding, so a timeout here is retried rather than fatal.
         """
-        if not user32.IsWindowEnabled(self.main):
-            raise RuntimeError("engine has an open modal dialog")
+        self.ensure_ready()
         res = ctypes.c_size_t()
-        for attempt in range(3):
+        # short per-attempt timeout + more attempts: a cold engine may need a
+        # moment before it accepts page commands, and one long wait would
+        # stall the caller for the full timeout.
+        attempts = max(3, int(timeout // 5) + 1)
+        for attempt in range(attempts):
             if user32.SendMessageTimeoutW(self.main, WM_COMMAND, page_cmd_id, 0,
-                                          0x0002, int(timeout * 1000),
+                                          0x0002, 5000,
                                           ctypes.byref(res)) != 0:
                 return
-            time.sleep(2.0)
+            time.sleep(1.5)
         raise RuntimeError("page did not finish loading")
 
     def press(self, hwnd: int) -> None:
+        self.ensure_ready()
         user32.PostMessageW(hwnd, BM_CLICK, 0, 0)
 
     def set_text(self, hwnd: int, value: str) -> None:
@@ -338,6 +357,22 @@ class Bridge:
         time.sleep(0.1)
 
     # ---------- run / completion ----------
+
+    def ensure_ready(self, dismiss: bool = True) -> list[int]:
+        """Make sure the engine can accept commands.
+
+        Some engines pop event modals on parameter changes (1.6.1 shows e.g.
+        'ECG shows S-T segment shift.'); while such a dialog is open the main
+        window is disabled and every command fails. Close those dialogs first.
+        Returns the list of dismissed dialog handles.
+        """
+        if not self.busy():
+            return []
+        dismissed = self.dismiss_modals() if dismiss else []
+        time.sleep(0.2)
+        if self.busy():
+            raise RuntimeError("engine still blocked by a modal dialog")
+        return dismissed
 
     def wait_idle(self, stop_cmd_id: int, timeout: float = 600.0,
                   start_grace: float = 8.0) -> float:
@@ -385,7 +420,9 @@ class Bridge:
 
         user32.EnumWindows(on_window, 0)
         for d in found:
-            user32.PostMessageW(d, WM_CLOSE, 0, 0)
+            # MessageBox-style dialogs (1.6.1 event modals) ignore BM_CLICK on
+            # their buttons - they want WM_COMMAND on the dialog itself.
+            user32.PostMessageW(d, WM_COMMAND, 1, 0)  # IDOK
             user32.PostMessageW(d, WM_COMMAND, 2, 0)  # IDCANCEL
 
             @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -397,7 +434,16 @@ class Bridge:
                 return True
 
             user32.EnumChildWindows(d, on_child, 0)
+            # WM_CLOSE last: for dialogs that ignore both
+            user32.PostMessageW(d, WM_CLOSE, 0, 0)
         time.sleep(0.3)
+        # verify: anything still open gets a second, harder pass
+        still = [h for h in self._visible_dialogs() if h in found]
+        for d in still:
+            user32.SendMessageTimeoutW(d, WM_COMMAND, 2, 0, 0x0002, 2000,
+                                       ctypes.byref(ctypes.c_size_t()))
+        if still:
+            time.sleep(0.2)
         return found
 
     def save_file_dialog(self, command_id: int, target_path: str,
@@ -409,6 +455,9 @@ class Bridge:
         target_path = os.path.abspath(target_path)
         if os.path.exists(target_path):
             os.remove(target_path)
+        # event modals (1.6.1 pops them on parameter changes) would block the
+        # export - clear them first instead of failing
+        self.ensure_ready()
         if self.busy():
             raise RuntimeError("engine busy or modal is open")
         user32.PostMessageW(self.main, WM_COMMAND, command_id, 0)

@@ -23,12 +23,12 @@ from datetime import datetime
 from mcp.server.mcpserver import MCPServer
 
 try:
-    from .bridge import Bridge
+    from .bridge import Bridge, user32
     from .profile import Profile
     from .solver import parse_export, parse_sol, parse_sol_history
 except ImportError:  # run as a plain script: python oh_my_hummod/server.py
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from oh_my_hummod.bridge import Bridge
+    from oh_my_hummod.bridge import Bridge, user32
     from oh_my_hummod.profile import Profile
     from oh_my_hummod.solver import parse_export, parse_sol, parse_sol_history
 
@@ -107,13 +107,66 @@ def safe(fn):
     return w
 
 
+def _resolve_panel(tree, path: str, profile: Profile):
+    """Resolve a panel path, applying profile aliases and fuzzy fallback.
+
+    Build-to-build differences (e.g. 'Respiration/Thorax' vs 'Physiology/Lungs/
+    Thorax') are handled by profile.menu_aliases; a near-miss path returns the
+    closest candidates instead of a bare KeyError.
+    """
+    # 1) exact
+    try:
+        return tree.walk(path), path
+    except KeyError:
+        pass
+    # 2) profile alias: canonical -> build-specific
+    alias = profile.menu_aliases.get(path)
+    if alias:
+        try:
+            return tree.walk(alias), alias
+        except KeyError:
+            pass
+    # 3) alias by leaf label: any path whose last segment matches
+    leaf = path.rsplit("/", 1)[-1].strip().lower()
+    candidates = []
+
+    def dfs(node, prefix=""):
+        for c in node.children:
+            p = f"{prefix}/{c.label}" if prefix else c.label
+            if c.cmd_id is not None:
+                if c.label.strip().lower() == leaf:
+                    candidates.append(p)
+                elif leaf and leaf in c.label.strip().lower():
+                    candidates.append(p)
+            if c.children:
+                dfs(c, p)
+
+    dfs(tree)
+    if candidates:
+        # prefer the shortest path (least ambiguity)
+        candidates.sort(key=len)
+        return tree.walk(candidates[0]), candidates[0]
+    raise KeyError(f"menu path not found: {path!r}")
+
+
 def _navigate(panel_path: str, engine: str = "default") -> int:
-    b, _ = get_bridge(engine)
+    b, p = get_bridge(engine)
     tree = b.menu_tree()
-    node = tree.walk(panel_path)
+    try:
+        node, resolved = _resolve_panel(tree, panel_path, p)
+    except KeyError as e:
+        # list siblings that share the first segment, to help the caller correct
+        first = panel_path.split("/")[0].strip().lower()
+        near = []
+        for c in tree.children:
+            if first and (first in c.label.strip().lower()):
+                for k in c.children:
+                    near.append(f"{c.label}/{k.label}")
+        hint = ("; did you mean one of: " + ", ".join(near[:12])) if near else ""
+        raise RuntimeError(f"{e}{hint}")
     if node.cmd_id is None:
         kids = ", ".join(c.label for c in node.children)
-        raise RuntimeError(f"'{panel_path}' is a submenu; pick one of: {kids}")
+        raise RuntimeError(f"'{resolved}' is a submenu; pick one of: {kids}")
     b.navigate(node.cmd_id)
     return node.cmd_id
 
@@ -165,7 +218,18 @@ def hummod_start(key: str = "default") -> str:
         return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
     b = Bridge(_ENGINES[key])  # exe name discovered from the folder
     pid = b.start()
-    p = _detect_profile(b)
+    if PROFILE_NAME:  # explicit env profile avoids _detect_profile's menu race
+        p = Profile.load(PROFILE_NAME)
+    else:
+        p = None
+        for _ in range(30):  # page rows appear only after "Starting Model ... Binding ..."
+            try:
+                p = _detect_profile(b)
+                break
+            except RuntimeError:
+                time.sleep(1.0)
+        if p is None:
+            raise RuntimeError("engine started but its build menu never appeared")
     b.wait_ready(p.bind_marker)
     _bridges[key] = (b, p)
     return json.dumps({"ok": True, "pid": pid, "profile": p.name})
@@ -178,27 +242,47 @@ def hummod_restart(engine: str = "default") -> str:
     b, _ = get_bridge(engine)
     cmd = b.menu_tree().walk("Restart").cmd_id
     b.command(cmd)
-    _wait_done(60)
+    _wait_done(engine, 60)
     return json.dumps({"ok": True, "action": "restart"})
 
 
 @server.tool()
 @safe
-def hummod_inspect(max_chars: int = 20000, engine: str = "default") -> str:
-    """Dump the engine's full menu tree (labels + command ids) and the current page's controls as JSON. Use it to find panel paths and control ordinals."""
+def hummod_inspect(max_chars: int = 20000, engine: str = "default",
+                   mode: str = "both", panel_path: str | None = None) -> str:
+    """Inspect the engine: mode='menu' (menu tree with command ids and full paths),
+    mode='controls' (current page's widgets only), mode='both' (default).
+    panel_path optionally navigates first and returns that page's widgets.
+    The menu tree alone can be long - prefer mode='controls' when you only need widgets."""
     b, p = get_bridge(engine)
-    menu = b.menu_tree()
+    if panel_path:
+        _navigate(panel_path, engine)
 
-    def ser(n):
-        d = {"label": n.label, "id": n.cmd_id, "enabled": n.enabled}
+    def ser(n, path=""):
+        full = f"{path}/{n.label}" if path and n.label else (path or n.label)
+        d = {"label": n.label, "path": full, "id": n.cmd_id, "enabled": n.enabled}
         if n.children:
-            d["children"] = [ser(c) for c in n.children]
+            d["children"] = [ser(c, full) for c in n.children]
         return d
 
-    controls = [{"cls": c.cls, "id": c.ctrl_id, "text": c.text[:120], "enabled": c.enabled,
-                 "radio": c.is_radio, "checkbox": c.is_checkbox, "pos": c.scroll_pos}
-                for c in b.controls()]
-    return json.dumps({"profile": p.name, "menu": ser(menu), "controls": controls})[:max_chars]
+    out: dict = {"profile": p.name}
+    if mode in ("menu", "both"):
+        out["menu"] = ser(b.menu_tree())
+    if mode in ("controls", "both"):
+        controls = [{"cls": c.cls, "id": c.ctrl_id, "text": c.text[:120],
+                     "enabled": c.enabled, "visible": c.visible,
+                     "radio": c.is_radio, "checkbox": c.is_checkbox,
+                     "action": c.cls == "Button" and c.text.strip() == "!",
+                     "pos": c.scroll_pos, "min": c.scroll_min, "max": c.scroll_max}
+                    for c in b.controls()]
+        out["controls"] = controls
+        out["control_summary"] = {
+            "radios": sum(1 for c in controls if c["radio"]),
+            "actions": sum(1 for c in controls if c["action"]),
+            "edits": sum(1 for c in controls if c["cls"] == "Edit"),
+            "sliders": sum(1 for c in controls if c["cls"] == "ScrollBar"),
+        }
+    return json.dumps(out)[:max_chars]
 
 
 @server.tool()
@@ -207,6 +291,17 @@ def hummod_navigate(panel_path: str, engine: str = "default") -> str:
     """Switch the engine to a panel page by menu path, e.g. 'Trauma/Hemorrhage' or 'Diagnosis/Chart'."""
     mid = _navigate(panel_path, engine)
     return json.dumps({"ok": True, "navigated": panel_path, "menu_id": mid})
+
+
+@server.tool()
+@safe
+def hummod_stop_state(engine: str = "default") -> str:
+    """Report whether the Stop menu item is enabled (True = simulation currently running)."""
+    b, p = get_bridge(engine)
+    stop_id = p.stop_cmd_id
+    if stop_id is None:
+        stop_id = b.menu_tree().find("Stop").cmd_id
+    return json.dumps({"stop_enabled": bool(b.menu_item_enabled(stop_id))})
 
 
 @server.tool()
@@ -304,6 +399,45 @@ def hummod_action(panel_path: str, ordinal: int, expected: int | None = None, en
 
 @server.tool()
 @safe
+def hummod_probe_radio(panel_path: str, probe_vars: list[str],
+                       engine: str = "default") -> str:
+    """Discover radio-button semantics automatically.
+
+    Presses each radio on the page in turn and reads probe_vars from a snapshot
+    after every press, so the caller can tell which radio means On/Off even
+    though the native buttons carry no text. Returns per-ordinal observed
+    values plus a ready-to-paste profile snippet for radio_semantics.
+    """
+    b, p = get_bridge(engine)
+    _navigate(panel_path, engine)
+    radios = sorted([c for c in b.controls() if c.is_radio], key=lambda c: c.ctrl_id)
+    if not radios:
+        raise RuntimeError("no radio buttons on this page")
+    os.makedirs(OUTDIR, exist_ok=True)
+    want = {v.lower() for v in probe_vars}
+    results = []
+    for i, r in enumerate(radios):
+        b.press(r.hwnd)
+        time.sleep(0.4)
+        sol = os.path.join(OUTDIR, f"probe_{panel_path.replace('/', '_')}_{i}.SOL")
+        if os.path.exists(sol):
+            os.remove(sol)
+        b.save_file_dialog(p.file["save_sol"], sol, tuple(p.dialog_edit_ids))
+        vals = parse_export(sol, want)
+        results.append({"ordinal": i, "ctrl_id": r.ctrl_id, "values": vals})
+    # restore: press the first radio again (usually Off) and reset the model
+    b.press(radios[0].hwnd)
+    time.sleep(0.2)
+    snippet = {panel_path: {f"radio{i}": "?" for i in range(len(radios))}}
+    return json.dumps({"ok": True, "panel": panel_path, "count": len(radios),
+                       "probes": results,
+                       "profile_snippet_template": snippet,
+                       "note": "radio captions are owner-drawn; label each ordinal from the "
+                               "observed value change (e.g. the one raising a switch to 1 = 'on')"})
+
+
+@server.tool()
+@safe
 def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None = None, engine: str = "default") -> str:
     """Set an Edit (text) control on a panel page and click its apply button ("> button adjacent by control id). Ords per page from hummod_inspect; expected = total edit count (guardrail)."""
     b, _ = get_bridge(engine)
@@ -346,7 +480,6 @@ def hummod_slider(panel_path: str, ordinal: int, pos: int, expected: int, engine
 
 
 def _parent_of(hwnd: int) -> int:
-    from .bridge import user32
     return user32.GetParent(hwnd)
 
 
