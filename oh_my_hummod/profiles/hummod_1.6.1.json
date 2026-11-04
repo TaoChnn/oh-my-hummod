@@ -11,11 +11,23 @@
     "radio_check_note": "BM_GETCHECK returns 0 for the owner-drawn radios; state must be read from SOL exports.",
     "navigate_retry": true,
     "ics_note": "Handbook: 1.6.1 cannot reliably save/import ICS files; SOL save/load works.",
-    "crash_note": "Handbook: divide-by-zero crashes on some pathologies (cardiac arrest, apnea); avoid those pages."
+    "crash_note": "Handbook: divide-by-zero crashes on some pathologies (cardiac arrest, apnea); avoid those pages.",
+    "version_note": "Ships a VERSION file (VERSION=\"1.6.1\"); server profile detection reads it first because the live top-level menu populates progressively during startup and can misdetect the build (seen: 1.6.1 detected as 3.0.4).",
+    "message_no_modal": "Model <message> events (e.g. exercise auto-stop: 'I can't exercise any more...') do not open blocking Win32 dialogs; detect them via model vars (Exercise-Control.Request -> 0, Brain-Function.Impaired = 1). Death by anoxia also raises no 'Continue?' dialog.",
+    "shot_hidden_black": "The engine is started hidden (SW_HIDE) and its window never paints, so hummod_shot returns all-black PNGs; read values from SOL snapshots instead.",
+    "repeatlist_firstval_zero": "Parameter slider lists start at 0 unless <firstval> is given: Ventilator.Rate pos==value (1/min), Ventilator.TidalVolume pos*10 (mL), Exercise-Bike.Power(W) pos*50 (W, 0-350; 150 = 'Moderate')."
   },
   "page_ids": { "Clinic/Hemorrhage": 532 },
   "radio_semantics": {
-    "Clinic/Hemorrhage": { "off": 0, "on": 1 }
+    "Clinic/Hemorrhage": { "off": 0, "on": 1 },
+    "Clinic/Ventilator": { "off": 0, "on": 1 },
+    "Lifestyle/Exercise/Control": { "resting": 0, "exercise_bike": 1, "treadmill": 2, "treadmill_run": 3, "treadmill_walk": 4 }
   },
-  "panels": { "hemorrhage": "Clinic/Hemorrhage" }
+  "panels": {
+    "hemorrhage": "Clinic/Hemorrhage",
+    "chart": "Clinic/Chart",
+    "ventilator": "Clinic/Ventilator",
+    "exercise_control": "Lifestyle/Exercise/Control",
+    "skeletal_muscle_circulation": "Organs/Skeletal Muscle/Circulation"
+  }
 }

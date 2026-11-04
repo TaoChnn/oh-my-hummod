@@ -64,8 +64,34 @@ _ENGINES = _load_engines()
 _bridges: dict[str, tuple[Bridge, Profile]] = {}
 
 
+def _profile_from_engine_dir(engine_dir: str) -> Profile | None:
+    """Identify the engine build from its VERSION file (exact, race-free).
+
+    Standalone HumMod folders ship a VERSION file (e.g. VERSION="1.6.1").
+    When a builtin profile named hummod_<version> exists, it wins: the live
+    top-level menu is unreliable during process startup - on HumMod 1.6.1 the
+    menu tree populates progressively and the detection loop can observe a
+    partial menu, misclassifying the build (observed: 1.6.1 detected as 3.0.4,
+    after which the wrong profile stayed cached for the process lifetime).
+    """
+    try:
+        with open(os.path.join(engine_dir, "VERSION"), encoding="utf-8", errors="replace") as f:
+            raw = f.read().strip()
+        # VERSION file may be a bare version ("1.6.1") or KEY=VALUE (VERSION="1.6.1")
+        version = raw.split("=", 1)[1] if "=" in raw else raw
+        version = version.strip().strip('"').strip("'").strip()
+        if version:
+            return Profile.load(f"hummod_{version}")
+    except (OSError, ValueError, TypeError):
+        pass  # unreadable/unknown version -> fall back to menu detection
+    return None
+
+
 def _detect_profile(b: Bridge) -> Profile:
-    """Identify the engine build from its live top-level menu (discovery-first)."""
+    """Identify the engine build: VERSION file first, then the live top-level menu."""
+    p = _profile_from_engine_dir(b.engine_dir)
+    if p is not None:
+        return p
     top = {c.label for c in b.menu_tree().children}
     if "Startup" in top and "Clinic" in top:
         return Profile.load("hummod_1.6.1")
