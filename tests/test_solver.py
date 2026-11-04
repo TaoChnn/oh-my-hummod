@@ -45,6 +45,15 @@ def test_parse_sol_history_missing():
     assert "BloodVol.Vol" in hist["series"]
 
 
+def test_parse_sol_history_time_axis_not_missing():
+    # Requesting System.X returns it as the `t` axis - it must not be
+    # reported in `missing` (regression: it used to be listed there).
+    hist = parse_sol_history(SOL, {"System.X", "BloodVol.Vol"})
+    assert "System.X" not in hist["missing"]
+    assert "BloodVol.Vol" in hist["series"]
+    assert len(hist["t"]) == hist["points"]
+
+
 def test_parse_sol_missing_var_returns_empty():
     assert parse_sol(SOL, {"does.not.exist"}) == {}
 
