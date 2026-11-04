@@ -363,7 +363,25 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
             "the engine window itself is hidden (the MCP server starts it with "
             "SW_HIDE). 'shown' is the control's own WS_VISIBLE bit and says "
             "whether the widget is part of the page.")
-    return json.dumps(out)[:max_chars]
+    # Keep the response valid JSON: trim the control list instead of cutting
+    # the serialized string (a cut string is unparsable for the caller).
+    txt = json.dumps(out, ensure_ascii=False)
+    if len(txt) > max_chars:
+        trimmed = dict(out)
+        ctrl = out.get("controls", [])
+        keep = max(0, len(ctrl) // 2)
+        while keep > 0:
+            trimmed["controls"] = ctrl[:keep]
+            candidate = json.dumps(trimmed, ensure_ascii=False)
+            if len(candidate) <= max_chars:
+                break
+            keep //= 2
+        trimmed["controls"] = ctrl[:keep]
+        trimmed["truncated"] = {
+            "controls_total": len(ctrl), "controls_shown": keep,
+            "hint": "raise max_chars, or narrow the page, to see the rest"}
+        txt = json.dumps(trimmed, ensure_ascii=False)
+    return txt
 
 
 @server.tool()
@@ -924,20 +942,75 @@ def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None 
 
 @server.tool()
 @safe
-def hummod_slider(panel_path: str, ordinal: int, pos: int, expected: int, engine: str = "default") -> str:
-    """Move a slider on a panel page. WARNING: some engines (3.0.4) accept the thumb move but do not commit the model value - verify via hummod_snapshot and prefer XML parm edits there."""
+def hummod_slider(panel_path: str, ordinal: int | None = None, pos: int = 0,
+                  expected: int | None = None, engine: str = "default",
+                  ctrl_id: int | None = None, label: str | None = None) -> str:
+    """Move a slider on a panel page.
+
+    Locate the slider by ordinal (order by control id), by ctrl_id, or by label
+    (the caption printed next to it - matched against the page's static texts,
+    so owner-drawn sliders are addressable too).
+    Pages often mix parameter sliders with plain scroll bars; hummod_inspect
+    lists both with ctrl_id, rect and position.
+    WARNING: some engines (3.0.4) accept the thumb move but do not commit the
+    model value - verify via hummod_snapshot and prefer XML parm edits there.
+    """
     b, p = get_bridge(engine)
     _navigate(panel_path, engine)
-    sliders = sorted([c for c in b.controls() if c.cls == "ScrollBar"], key=lambda c: c.ctrl_id)
-    if len(sliders) != expected:
+    sliders = sorted([c for c in b.controls() if c.cls == "ScrollBar"],
+                     key=lambda c: c.ctrl_id)
+    if expected is not None and len(sliders) != expected:
         raise RuntimeError(f"slider count mismatch: found {len(sliders)}, expected {expected}")
-    s = sliders[ordinal]
-    b.set_slider(s.hwnd, _parent_of(s.hwnd), pos,
-                 commit_endscroll=True)
+    if not sliders:
+        raise RuntimeError("no ScrollBar controls on this page")
+
+    target = None
+    how = None
+    if ctrl_id is not None:
+        target = next((c for c in sliders if c.ctrl_id == ctrl_id), None)
+        how = "ctrl_id"
+        if target is None:
+            raise RuntimeError(f"no slider with ctrl_id {ctrl_id}; available: "
+                               f"{[(c.ctrl_id, c.scroll_pos) for c in sliders]}")
+    elif label is not None:
+        want = label.strip().lower()
+        statics = [c for c in b.controls() if c.cls == "Static" and c.text.strip()]
+        best = None
+        for c in sliders:
+            for s in statics:
+                if want in s.text.strip().lower() and (
+                        abs(s.y_center - c.y_center) <= 24 or s.left > c.right):
+                    d = abs(s.y_center - c.y_center)
+                    if best is None or d < best[0]:
+                        best = (d, c)
+                    break
+        if best is None:
+            listing = [{"ordinal": i, "ctrl_id": c.ctrl_id, "pos": c.scroll_pos,
+                        "rect": [c.left, c.top, c.right, c.bottom]}
+                       for i, c in enumerate(sliders)]
+            raise RuntimeError(
+                f"no slider found near a label matching {label!r}; "
+                f"sliders on this page: {listing}. "
+                + ("This engine draws its captions on the canvas, so text matching "
+                   "cannot work here - address the slider by ordinal or ctrl_id, "
+                   "or use hummod_shot to see which one is which."
+                   if not statics else
+                   "page labels: " + str([s.text.strip() for s in statics][:20])))
+        target, how = best[1], "label"
+    elif ordinal is not None:
+        if ordinal < 0 or ordinal >= len(sliders):
+            raise RuntimeError(f"ordinal {ordinal} out of range ({len(sliders)} sliders)")
+        target, how = sliders[ordinal], "ordinal"
+    else:
+        raise RuntimeError("provide ordinal, ctrl_id or label")
+
+    b.set_slider(target.hwnd, _parent_of(target.hwnd), pos, commit_endscroll=True)
     note = None
     if p.quirks.get("slider_commits") is False:
         note = p.quirks.get("slider_note")
-    return json.dumps({"ok": True, "pos": pos, "verify": "snapshot the model value", "quirk": note})
+    return json.dumps({"ok": True, "pos": pos, "located_by": how,
+                       "ctrl_id": target.ctrl_id, "slider_count": len(sliders),
+                       "verify": "snapshot the model value", "quirk": note})
 
 
 def _parent_of(hwnd: int) -> int:
@@ -969,16 +1042,18 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
 @server.tool()
 @safe
 def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default") -> str:
-    """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables. Returns path + values (System.X = sim time on HumMod).
+    """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables.
 
+    The simulation clock (System.X on HumMod, X on QCP) is always included in
+    'values', so every snapshot tells you which model time it was taken at.
     Requested names that do not exist in the model are listed under 'missing'
     instead of being silently dropped."""
     b, p = get_bridge(engine)
     path = _export_snapshot(b, p, name)
     want = {v.lower() for v in (vars or [])}
-    if not want and p.file.get("save_sol") is not None:
-        want = {"system.x"}  # default sim-time probe for HumMod SOLs
-    vals = parse_export(path, want or None)
+    clock = "system.x" if p.file.get("save_sol") is not None else "x"
+    want.add(clock)  # always report the model clock
+    vals = parse_export(path, want)
     have = {k.lower() for k in vals}
     missing = [v for v in (vars or []) if v.lower() not in have]
     return json.dumps({"ok": True, "path": path, "values": vals, "missing": missing})

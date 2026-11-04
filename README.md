@@ -1,9 +1,10 @@
 # oh-my-hummod
 
-Drive **HumMod / QCP** physiology simulation engines from any MCP client
-(ZCode, Claude, ...) — window messages only, **no engine source required, no
-reverse engineering**. The engine cannot tell these messages from a user's
-mouse.
+Drive **HumMod / QCP** physiology simulation engines from any MCP client —
+window messages only, **no engine source required, no reverse engineering**.
+The engine cannot tell these messages from a user's mouse.
+
+Tested with **Claude Code**, **Codex CLI** and **ZCode**.
 
 ```
 MCP client ──stdio──> oh-my-hummod server ──Win32 messages──> engine EXE
@@ -31,15 +32,101 @@ pip install -e .
 set HUMMOD_ENGINE_DIR=C:\HumMod
 python tests\engine_smoke.py --engine C:\HumMod --profile hummod_3.0.4
 ::   expect: ENGINE_SMOKE_OK
-
-:: 4) register with your MCP client (see snippet below), restart the client,
-::    and the hummod_* tools appear in the tool list
 ```
 
 The profile is auto-detected from the engine EXE in `HUMMOD_ENGINE_DIR`
 (`hummod_3.0.4` / `hummod_1.6.1` / `qcp_2005` / `hummod_bat` / `avphummod`).
 `tests\discover.py --engine C:\Some\Other\Build` prints everything needed to
 add a profile for an unknown build.
+
+## Register with your MCP client
+
+The server is a plain console program over stdio, so every client needs the
+same three things: the **command** that starts it, its **arguments**, and the
+**environment** it reads.
+
+### Claude Code
+
+```bash
+claude mcp add hummod \
+  --env HUMMOD_ENGINE_DIR=C:\HumMod \
+  --env HUMMOD_OUTDIR=C:\hummod-exports \
+  -- python -m oh_my_hummod.server
+```
+
+Add `--scope project` (shared via `.mcp.json` in the repo) or `--scope user`
+(all projects). The same thing by hand, in `.mcp.json` or `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "hummod": {
+      "command": "python",
+      "args": ["-m", "oh_my_hummod.server"],
+      "env": {
+        "HUMMOD_ENGINE_DIR": "C:\\HumMod",
+        "HUMMOD_OUTDIR": "C:\\hummod-exports"
+      }
+    }
+  }
+}
+```
+
+### Codex CLI
+
+Codex reads `config.toml` in its home directory (`~/.codex/config.toml` on
+Windows, `%USERPROFILE%\.codex\config.toml`):
+
+```toml
+[mcp_servers.hummod]
+command = "python"
+args = ["-m", "oh_my_hummod.server"]
+
+[mcp_servers.hummod.env]
+HUMMOD_ENGINE_DIR = "C:\\HumMod"
+HUMMOD_OUTDIR = "C:\\hummod-exports"
+```
+
+or from the CLI:
+
+```bash
+codex mcp add hummod --env HUMMOD_ENGINE_DIR=C:\HumMod -- python -m oh_my_hummod.server
+```
+
+### ZCode
+
+ZCode keeps MCP servers in `~/.zcode/cli/config.json` under `mcp.servers`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "hummod": {
+        "command": "python",
+        "args": ["-m", "oh_my_hummod.server"],
+        "env": {
+          "HUMMOD_ENGINE_DIR": "C:\\HumMod",
+          "HUMMOD_OUTDIR": "C:\\hummod-exports"
+        }
+      }
+    }
+  }
+}
+```
+
+### Notes for all clients
+
+- Use the **absolute path** of the Python that has `oh-my-hummod` installed
+  (`where python` / `which python`) if the client's PATH differs from your
+  shell's.
+- `HUMMOD_PROFILE` may be omitted — the server auto-detects the engine by its
+  EXE name.
+- After editing the library's source, **restart the MCP server**: clients
+  cache both the tool list and the loaded module for the life of a session.
+- Some clients cap tool-call duration (commonly 30 s). Long runs
+  (`hummod_go` on a week-scale step) can exceed that; `hummod_go` accepts
+  `wait=False` to return immediately, then poll with `hummod_busy` and fetch
+  results with `hummod_snapshot`.
 
 ## Design: discovery first, profiles for the rest
 
@@ -55,42 +142,24 @@ be discovered:
 | `stop_cmd_id` | completion semantics: grayed Stop = simulation finished |
 | `bind_marker` | top-level menu label that signals the model finished binding |
 | `radio_semantics` | unlabeled radio buttons (owner-drawn captions) → meaning |
+| `menu_aliases` | canonical panel path → build-specific path |
+| `page_ids` | panels that have no menu label at all (bitmap toolbars) |
 | `quirks` | engine behaviours that change tool behaviour (slider commit, EPO, model noise) |
 
 Adding a new engine version = run `tests/discover.py` against it, note the
 differences, drop a JSON in `profiles/`. No code changes.
 
-Register with an MCP client (ZCode `~/.zcode/cli/config.json`):
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "hummod": {
-        "command": "python",
-        "args": ["-m", "oh_my_hummod.server"],
-        "env": {
-          "HUMMOD_ENGINE_DIR": "C:\\HumMod",
-          "HUMMOD_PROFILE": "hummod_3.0.4",
-          "HUMMOD_OUTDIR": "C:\\hummod-exports"
-        }
-      }
-    }
-  }
-}
-```
-
-`HUMMOD_PROFILE` may be omitted — the server auto-detects the engine by its
-EXE name.
-
 ## Tools
 
-`hummod_status` `hummod_start` `hummod_restart` `hummod_inspect` `hummod_engines`
-`hummod_navigate` `hummod_menu_command` `hummod_go` (waits for completion)
-`hummod_radio` (by profile label **or** ordinal, returns checked states) `hummod_action` (canvas "!" triggers, e.g. CPR defibrillation - must run during simulation)
-`hummod_edit` `hummod_slider` `hummod_snapshot` (SOL export + variable
-parsing) `hummod_get_vars` `hummod_history` (time series, plot-ready)
-`hummod_probe_radio` (auto-discovers radio semantics) `hummod_dismiss_modal` `hummod_profile`.
+| Area | Tools |
+|---|---|
+| Engine lifecycle | `hummod_status` `hummod_engines` `hummod_start` `hummod_restart` `hummod_restart_engine` (relaunch the process so model XML is re-read) |
+| Discovery | `hummod_inspect` (`mode="menu"/"controls"/"both"`) `hummod_profile` `hummod_probe_radio` (auto-discover radio semantics) |
+| Navigation | `hummod_navigate` (panel path) `hummod_menu_command` (menu path or command id) `hummod_view_group` (toggle a toolbar group) `hummod_open_panel` (via the engine's own "find panel" dialog) |
+| Running | `hummod_go` (duration, `times=`, `verify=`, `wait=`) `hummod_busy` `hummod_stop_state` |
+| Controls | `hummod_radio` `hummod_edit` `hummod_slider` `hummod_action` (`!` triggers) `hummod_button` (captioned buttons) `hummod_click` `hummod_drag` (coordinates) |
+| Dialogs | `hummod_dialogs` `hummod_dialog_button` `hummod_modals` `hummod_dismiss_modal` `hummod_popup` `hummod_listbox` |
+| Data | `hummod_snapshot` `hummod_get_vars` `hummod_history` (time series) `hummod_shot` (screenshot of the engine window) |
 
 Every tool takes an optional `engine=` key, so one server can drive several
 engine builds at once (see `engines.json`); `hummod_engines` lists them with
@@ -107,6 +176,9 @@ Notes that came out of multi-engine field trials:
   automatically before the next command.
 - `hummod_probe_radio` presses each radio in turn and snapshots a probe
   variable, so On/Off ordinals are discovered rather than guessed.
+- Sliders can be addressed by ordinal, `ctrl_id` or `label`; pages often mix
+  parameter sliders with plain scroll bars, so prefer `label`/`ctrl_id` when
+  the page has more than a couple of them.
 
 Errors return one-line JSON; unknown menu paths list the available siblings so
 agents can self-correct.
@@ -119,7 +191,7 @@ agents can self-correct.
 | **HumMod-BAT** (2018 custom build) | `hummod_bat` | ✅ engine_smoke passed - menu skeleton identical to 3.0.4, profile reuses it |
 | **avphummod** (Modular AVP build) | `avphummod` | ✅ engine_smoke passed - same lineage; ships Model Solver.exe + ScriptedController.exe |
 | HumMod standalone **1.6.1** | `hummod_1.6.1` | ✅ engine_smoke passed (Clinic/Hemorrhage, SOL-verified radio toggle, Go 1 Min) |
-| **QCP 2005** | `qcp_2005` | ✅ core validated over MCP (navigate View pages, Go with two-phase stop semantics, ICS snapshots); hemorrhage lives on the Clinical-Buttons canvas and is not yet mapped |
+| **QCP 2005** | `qcp_2005` | ✅ core validated over MCP (canvas panels via command ids, View groups, ICS snapshots); no SOL export (QCP has none) and no time series - snapshot each point instead |
 
 Same-lineage builds (the whole 3.x custom family) share the 3.0.4 menu
 skeleton and cost **zero code** to add - a thin profile JSON at most.
@@ -166,4 +238,3 @@ BibTeX:
   note         = {v0.1.0, accessed <date>}
 }
 ```
-

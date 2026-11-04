@@ -433,6 +433,18 @@ class Bridge:
 
     _BUSY_WORDS = ("solv", "running", "calculat", "integrat", "simulat", "step")
 
+    def has_status_signal(self) -> bool:
+        """True when the engine's status bar carries run-state text.
+
+        HumMod writes "Solving ... / Done"; QCP 2005 keeps a static
+        "Starting Model ... Binding ... Done" line, so it carries no usable
+        signal and completion has to be judged by the Stop menu instead.
+        """
+        t = self.status_text().strip().lower()
+        if not t:
+            return False
+        return any(w in t for w in self._BUSY_WORDS) or t.endswith("done")
+
     def solving(self) -> bool:
         """True while the engine reports an unfinished run in its status bar.
 
@@ -472,6 +484,9 @@ class Bridge:
         started = False
         signal = "none"
         dismissed = 0
+        # Engines without a status-bar run signal (QCP 2005) have to be judged
+        # by their Stop menu item, which is enabled while the model runs.
+        stop_fallback = not self.has_status_signal()
         # phase 1 - catch the run starting
         while time.time() - t0 < start_grace:
             if dismiss and self.busy():
@@ -494,6 +509,12 @@ class Bridge:
             if dismiss and self.busy():
                 dismissed += len(self.dismiss_modals())
             if not self.solving():
+                if stop_fallback and self.menu_item_enabled(stop_cmd_id):
+                    # no status signal: the Stop menu is still lit, so the run
+                    # is not over (a modal popup can freeze the model while
+                    # the engine keeps the "running" state)
+                    time.sleep(0.2)
+                    continue
                 time.sleep(0.2)          # confirm: a solver pause is not the end
                 if not self.solving():
                     return {"started": started, "elapsed": time.time() - t0,
