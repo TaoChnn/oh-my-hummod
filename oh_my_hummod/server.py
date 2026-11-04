@@ -229,7 +229,7 @@ def hummod_start(key: str = "default") -> str:
     """Start an engine (hidden window) if not running. Key comes from engines.json."""
     if key not in _ENGINES:
         raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
-    if key in _bridges and _bridges[key][0].main:
+    if key in _bridges and _bridges[key][0].main and user32.IsWindow(_bridges[key][0].main):
         return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
     b = Bridge(_ENGINES[key])  # exe name discovered from the folder
     pid = b.start()
