@@ -24,12 +24,12 @@ from datetime import datetime
 from mcp.server.mcpserver import MCPServer
 
 try:
-    from .bridge import Bridge, user32
+    from .bridge import Bridge, MenuItem, user32
     from .profile import Profile
     from .solver import parse_export, parse_sol, parse_sol_history
 except ImportError:  # run as a plain script: python oh_my_hummod/server.py
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from oh_my_hummod.bridge import Bridge, user32
+    from oh_my_hummod.bridge import Bridge, MenuItem, user32
     from oh_my_hummod.profile import Profile
     from oh_my_hummod.solver import parse_export, parse_sol, parse_sol_history
 
@@ -141,17 +141,25 @@ def _resolve_panel(tree, path: str, profile: Profile):
             p = f"{prefix}/{c.label}" if prefix else c.label
             if c.cmd_id is not None:
                 if c.label.strip().lower() == leaf:
-                    candidates.append(p)
+                    candidates.append((p, c))
                 elif leaf and leaf in c.label.strip().lower():
-                    candidates.append(p)
+                    candidates.append((p, c))
             if c.children:
                 dfs(c, p)
 
     dfs(tree)
     if candidates:
         # prefer the shortest path (least ambiguity)
-        candidates.sort(key=len)
-        return tree.walk(candidates[0]), candidates[0]
+        candidates.sort(key=lambda pc: len(pc[0]))
+        # Return the node itself: the accumulated path is not necessarily
+        # walk()-able (a menu item under an unlabelled submenu would need an
+        # empty path segment, which walk() filters out).
+        return candidates[0][1], candidates[0][0]
+    # 4) profile page_ids: curated panel name -> command id (engines whose
+    #    pages are owner-drawn buttons have no usable menu label at all)
+    pid = profile.page_ids.get(path)
+    if pid is not None:
+        return MenuItem(label=path, cmd_id=int(pid), position=-1, enabled=True), path
     raise KeyError(f"menu path not found: {path!r}")
 
 
@@ -334,7 +342,8 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
                      "check_readable": c.check_state_readable,
                      "button_type": c.button_type if c.cls == "Button" else None,
                      "style": hex(c.style) if c.cls == "Button" else None,
-                     "pos": c.scroll_pos, "min": c.scroll_min, "max": c.scroll_max}
+                     "pos": c.scroll_pos, "min": c.scroll_min, "max": c.scroll_max,
+                     "rect": [c.left, c.top, c.right, c.bottom]}
                     for c in b.controls()]
         out["controls"] = controls
         out["control_summary"] = {
@@ -349,6 +358,43 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
                                    if c["button"] and c["text"].strip()
                                    and c["text"].strip() != "!"]
     return json.dumps(out)[:max_chars]
+
+
+@server.tool()
+@safe
+def hummod_view_group(group: str, want: bool = True, engine: str = "default") -> str:
+    """Show/hide a View-menu toolbar group (e.g. 'View/Basic Physiology').
+
+    QCP keeps its pages on canvas-drawn toolbar buttons; a group only exists in
+    the menu tree while it is displayed, so its page commands appear and
+    disappear with it. Toggling is reported by the change in menu size."""
+    b, _ = get_bridge(engine)
+
+    def size():
+        tree = b.menu_tree()
+        n = 0
+
+        def w(node):
+            nonlocal n
+            for c in node.children:
+                n += 1
+                w(c)
+        w(tree)
+        return n
+
+    node = b.menu_tree().walk(group)
+    before = size()
+    b.command(node.cmd_id)
+    time.sleep(0.6)
+    after = size()
+    if (after > before) == want:
+        return json.dumps({"ok": True, "group": group, "state": "on" if want else "off",
+                           "menu_entries": after})
+    # wrong direction - toggle back
+    b.command(node.cmd_id)
+    time.sleep(0.6)
+    return json.dumps({"ok": True, "group": group, "state": "off" if want else "on",
+                       "menu_entries": size(), "note": "toggled twice to reach the wanted state"})
 
 
 @server.tool()
