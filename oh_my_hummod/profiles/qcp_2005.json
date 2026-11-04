@@ -32,7 +32,11 @@
     "page_reflows": true,
     "reflow_note": "Page control rects shift on window restore/repaint (e.g. Diet slider column moved x=44 -> x=382 screen); re-inspect controls before coordinate-based clicks, ordinals stay stable.",
     "ics_state_only": true,
-    "ics_note": "Save ICs holds only ~1370 STATE variables (pools, gains, clamps). Derived outcomes (MAP, atrial pressures, hormone concentrations, excretion rates) are NOT in the ICS - read them from the page canvases via hummod_shot (Blood Pressure page 144 shows MAP/SBP/DBP/RAP/LAP at once)."
+    "ics_note": "Save ICs holds only ~1370 STATE variables (pools, gains, clamps). Derived outcomes (MAP, atrial pressures, hormone concentrations, excretion rates) are NOT in the ICS - read them from the page canvases via hummod_shot (Blood Pressure page 144 shows MAP/SBP/DBP/RAP/LAP at once).",
+    "go_step_is_solver_step": "The Go duration IS the solver solution interval: a 30-min Go writes SOLNINT=30/DISPINT=2/DX=2 into the ICS, a 10-min Go writes SOLNINT=10/DISPINT=0.5/DX=0.5. Same-protocol reruns reproduce bit-for-bit, but changing the step length also changes the RANDOM/NORMAL noise sequence; observed 90-min endpoint differences between 30-min and 10-min step protocols stayed <=~2% on core pools (glucose/insulin mass), so event timing (coma, CV collapse) is step-length insensitive on this stiff model - step-length effects show through SAMPLING density, not dynamics.",
+    "slider_pos0_verified": "SB_LINELEFT fallback for pos 0 verified on the Infusion Pumps insulin rate slider (Setting 1000->0 and 20->0, both committed exactly).",
+    "consciousness_note": "No dedicated consciousness variable; 'Posture Control, Recent Coma' (ICS) latches to 1 after a faint and never resets - combine with Monitor page vitals (RR/HR/BP/Temp); death = Heart Rate 0 + ECG Flat + all Tissue Glucose Use 0.",
+    "pump_note": "Insulin pump lives on Infusion Pumps (117) AND as a pump box on the Insulin page (357). Verify interventions via ICS vars 'Insulin Pump, Setting' (rate, mU/min) / 'Insulin Pump, Switch' (0/1); infusion stops on Switch=0 while Setting is retained."
   },
   "page_ids": {
     "View/Clinical Buttons": 46,
@@ -54,6 +58,7 @@
     "Daily Planner/Control": 69,
     "Daily Planner/Schedule": 74,
     "Blood Pressure": 144,
+    "Heart Rate": 200,
     "Electrolytes Na+": 244,
     "Angiotensin": 327,
     "Kidney Renin": 332,
@@ -65,7 +70,9 @@
     "Metabolism Summary": 367,
     "Fatty Acids": 375,
     "Glucose": 378,
-    "Triglycerides": 389
+    "Triglycerides": 389,
+    "Infusion Pumps": 117,
+    "Misc. Treatments": 131
   },
   "slider_maps": {
     "Diet": {
@@ -73,10 +80,16 @@
       "table_salt_mmol_day": "pos 0-10 -> value=pos; pos 11-27 -> 10+10*(pos-10); pos 28-43 -> 180+20*(pos-27); max 500 at pos 43",
       "kcal_sliders": "value = pos * 20 (range 0-130: Carbo's, Fat, Protein)",
       "water_l_day": "value = pos * 0.1 (range 0-100)"
+    },
+    "Infusion Pumps": {
+      "layout": "11 pump rows: right column top->bottom = ADH, Lactic Acid, Erythropoietin, Norepinephrine, Insulin; left column = All, ANP, Aldosterone, Epinephrine, Glucose, Ketoacid. All rate scrollbars have ctrl_id 0 -> ordinal = z-order; ordinal 0 = Insulin rate (verified by probe).",
+      "insulin_rate_mU_min": "pos 0-20 -> value=pos; pos 21-28 -> 30+10*(pos-21); pos 29-37 -> 200+100*(pos-29); >=38 (and >=40) cap at 1000. pos 20 = 20 (normal secretion), pos 29 = 200 mU/min.",
+      "verify": "read 'Insulin Pump, Setting' via hummod_snapshot after each move"
     }
   },
   "radio_semantics": {
-    "Control": {"off": 0, "on": 1, "note": "Daily Planner Switch radios have readable captions (Off id 1199 / On id 1200); ordinal order = ctrl_id order"}
+    "Control": {"off": 0, "on": 1, "note": "Daily Planner Switch radios have readable captions (Off id 1199 / On id 1200); ordinal order = ctrl_id order"},
+    "Infusion Pumps": {"off": 0, "on": 1, "note": "11 Off/On pairs (ids 1016-1037), ascending id = right column bottom->top then left column bottom->top; Insulin pair = ordinals 0 (Off, id 1016) / 1 (On, id 1017). Native check states are unreliable on QCP - always probe with ['Insulin Pump, Switch', 'Insulin Pump, Setting']."}
   },
   "panels": {}
 }
