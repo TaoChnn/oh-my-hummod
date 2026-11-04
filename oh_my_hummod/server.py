@@ -549,12 +549,17 @@ def hummod_busy(engine: str = "default") -> str:
 
 
 def _sim_time(b: Bridge, p: Profile) -> float | None:
-    """Read the model clock (System.X, in minutes) from the engine."""
+    """Read the model clock (System.X, in minutes) from the engine.
+
+    HumMod exports it as "System.X"; the QCP family saves ICs where the clock
+    variable is plain "X" - accept both spellings or the clock read returns
+    None for every QCP snapshot.
+    """
     try:
         path = _export_snapshot(b, p, "_simtime_" + datetime.now().strftime("%H%M%S%f"))
-        vals = parse_export(path, {"system.x"})
-        for k, v in vals.items():
-            if k.lower() == "system.x":
+        vals = parse_export(path, {"system.x", "x"})
+        for k, v in sorted(vals.items(), key=lambda kv: kv[0].lower() != "system.x"):
+            if k.lower() in ("system.x", "x"):
                 return float(v)
     except Exception:
         return None
