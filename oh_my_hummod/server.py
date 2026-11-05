@@ -359,14 +359,27 @@ def hummod_status(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_start(key: str = "default", hidden: bool | str = True) -> str:
+def hummod_start(key: str = "default", hidden: bool | str = True,
+                 engine: str | None = None) -> str:
     """Start an engine if not running. Key comes from engines.json.
 
     hidden=True (default) starts with a hidden window, which suits HumMod 3.x.
     QCP 2005 exits within seconds when started hidden (observed repeatedly),
     so start it with hidden=False; the MCP tools attach to the visible window
     just as well.
+
+    `engine` is accepted as an alias for `key` (every other tool in this
+    server names the argument `engine`, so callers reasonably pass that).
+    Without the alias a mistyped/ignored argument silently started the
+    DEFAULT engine instead of the requested one - the wrong model then
+    answers every later call (observed with QCP: engine="qcp" launched
+    C:/path/to/engine\\HumMod.EXE).
     """
+    if engine:
+        if key not in ("default", engine):
+            raise RuntimeError(
+                f"conflicting engine keys: key={key!r} engine={engine!r}; pass only one")
+        key = engine
     if key not in _ENGINES:
         raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
     if key in _bridges and _bridges[key][0].main and user32.IsWindow(_bridges[key][0].main):
@@ -536,36 +549,49 @@ def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
 def hummod_view_group(group: str, want: bool | str = True, engine: str = "default") -> str:
     """Show/hide a View-menu toolbar group (e.g. 'View/Basic Physiology').
 
-    QCP keeps its pages on canvas-drawn toolbar buttons; a group only exists in
-    the menu tree while it is displayed, so its page commands appear and
-    disappear with it. Toggling is reported by the change in menu size."""
+    QCP keeps its pages on canvas-drawn toolbar buttons; a group only exists
+    in the menu tree while it is displayed, so its page commands appear and
+    disappear with it. Toggling is reported by the change in menu size.
+
+    The entries the group added/removed are returned as `pages_added` /
+    `pages_removed` (cmd_id + label): a group whose pages are not in the
+    menu tree yet cannot be reached otherwise, and dumping the whole menu
+    tree just to learn those ids is expensive.
+    """
     b, _ = get_bridge(engine)
 
-    def size():
-        tree = b.menu_tree()
-        n = 0
+    def entries():
+        """(cmd_id, label) of every menu entry, in tree order."""
+        out = []
 
         def w(node):
-            nonlocal n
             for c in node.children:
-                n += 1
+                out.append((c.cmd_id, c.label))
                 w(c)
-        w(tree)
-        return n
+        w(b.menu_tree())
+        return out
 
     node = b.menu_tree().walk(group)
-    before = size()
+    before = entries()
     b.command(node.cmd_id)
     time.sleep(0.6)
-    after = size()
-    if (after > before) == want:
-        return json.dumps({"ok": True, "group": group, "state": "on" if want else "off",
-                           "menu_entries": after})
-    # wrong direction - toggle back
-    b.command(node.cmd_id)
-    time.sleep(0.6)
-    return json.dumps({"ok": True, "group": group, "state": "off" if want else "on",
-                       "menu_entries": size(), "note": "toggled twice to reach the wanted state"})
+    after = entries()
+    note = None
+    if (len(after) > len(before)) != want:
+        # The toggle moved the group AWAY from the wanted state, i.e. it was
+        # already in that state: toggle back and the wanted state is restored.
+        b.command(node.cmd_id)
+        time.sleep(0.6)
+        after = entries()
+        note = "toggled twice to reach the wanted state"
+    before_set, after_set = set(before), set(after)
+    return json.dumps({
+        "ok": True, "group": group, "state": "on" if want else "off",
+        "menu_entries": len(after),
+        "pages_added": [{"cmd_id": i, "label": l} for i, l in after if (i, l) not in before_set],
+        "pages_removed": [{"cmd_id": i, "label": l} for i, l in before if (i, l) not in after_set],
+        **({"note": note} if note else {}),
+    })
 
 
 @server.tool()
@@ -940,8 +966,13 @@ def hummod_open_panel(variable: str, engine: str = "default",
         return json.dumps({"ok": True, "variable": variable, "category": cname,
                            "item": items[hit], "panels": panels,
                            "panel_opened": panels[pi] if panels else None})
+    # QCP's Find dialog lists ~445 categories; echoing all of them made a
+    # failed lookup return a multi-kilobyte payload that drowns the actual
+    # error. Report a short sample plus the count instead.
     return json.dumps({"ok": False, "error": f"variable {variable!r} not found",
-                       "categories": cats, "tried": tried})
+                       "n_categories": len(cats),
+                       "categories_sample": cats[:25],
+                       "tried": tried})
 
 
 @server.tool()
