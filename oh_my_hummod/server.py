@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import ctypes
 import functools
+import inspect
 import json
 import os
 import re
 import sys
 import time
+import typing
 from datetime import datetime
 
 from mcp.server.mcpserver import MCPServer
@@ -129,10 +131,94 @@ def get_bridge(engine: str = "default") -> tuple[Bridge, Profile]:
     return b, p
 
 
+def _coerce_scalar(value, want: str):
+    """Coerce a JSON scalar that a client may have marshalled as a string."""
+    if value is None:
+        return None
+    if want == "int":
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        try:
+            return int(text)
+        except ValueError:
+            return int(float(text))   # "100.0" -> 100
+    if want == "bool":
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off", ""):
+            return False
+        raise ValueError(f"expected a boolean, got {value!r}")
+    return value
+
+
+def _coerce_list(value):
+    """Accept the several shapes clients use for "a list of names".
+
+    ZCode's MCP client marshals a JSON array as {"item": [...]} (a one-element
+    array arrives as {"item": "x"}); other clients send a bare string for a
+    single name. All of them mean the same thing here.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        if "item" in value:
+            return _coerce_list(value["item"])
+        if len(value) == 1:
+            return _coerce_list(next(iter(value.values())))
+        raise ValueError(f"expected a list of names, got {value!r}")
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    raise ValueError(f"expected a list of names, got {value!r}")
+
+
+def _coerce_arguments(fn, args, kwargs):
+    """Coerce the declared parameters to the type the tool documents.
+
+    The advertised JSON schema is what an MCP client validates against, so a
+    tool that declares a plain `int` is rejected by clients that marshal
+    numbers as strings, and a tool that declares a plain `list[str]` is
+    rejected by clients that wrap arrays in {"item": [...]}. Declaring those
+    parameters as unions and coercing them here keeps every client working.
+    """
+    try:
+        hints = typing.get_type_hints(fn)
+    except Exception:
+        return args, kwargs
+    try:
+        bound = inspect.signature(fn).bind(*args, **kwargs)
+    except TypeError:
+        return args, kwargs
+    for name, value in list(bound.arguments.items()):
+        if value is None:
+            continue
+        ann = hints.get(name)
+        if ann is None:
+            continue
+        members = {t for t in getattr(ann, "__args__", (ann,)) if t is not type(None)}
+        # a generic alias (list[str]) is not the bare `list` - compare origins
+        origins = {typing.get_origin(t) or t for t in members}
+        if int in members and str in members:
+            bound.arguments[name] = _coerce_scalar(value, "int")
+        elif bool in members and str in members:
+            bound.arguments[name] = _coerce_scalar(value, "bool")
+        elif list in origins and dict in origins:
+            bound.arguments[name] = _coerce_list(value)
+    return bound.args, bound.kwargs
+
+
 def safe(fn):
     @functools.wraps(fn)
     def w(*a, **k):
         try:
+            a, k = _coerce_arguments(fn, a, k)
             return fn(*a, **k)
         except Exception as e:
             return json.dumps({"ok": False, "error": str(e)})
@@ -251,7 +337,7 @@ def hummod_status(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_start(key: str = "default", hidden: bool = True) -> str:
+def hummod_start(key: str = "default", hidden: bool | str = True) -> str:
     """Start an engine if not running. Key comes from engines.json.
 
     hidden=True (default) starts with a hidden window, which suits HumMod 3.x.
@@ -350,7 +436,7 @@ def hummod_restart_engine(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_inspect(max_chars: int = 20000, engine: str = "default",
+def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
                    mode: str = "both", panel_path: str | None = None) -> str:
     """Inspect the engine: mode='menu' (menu tree with command ids and full paths),
     mode='controls' (current page's widgets only), mode='both' (default).
@@ -424,7 +510,7 @@ def hummod_inspect(max_chars: int = 20000, engine: str = "default",
 
 @server.tool()
 @safe
-def hummod_view_group(group: str, want: bool = True, engine: str = "default") -> str:
+def hummod_view_group(group: str, want: bool | str = True, engine: str = "default") -> str:
     """Show/hide a View-menu toolbar group (e.g. 'View/Basic Physiology').
 
     QCP keeps its pages on canvas-drawn toolbar buttons; a group only exists in
@@ -462,7 +548,7 @@ def hummod_view_group(group: str, want: bool = True, engine: str = "default") ->
 @server.tool()
 @safe
 def hummod_navigate(panel_path: str | None = None, engine: str = "default",
-                    menu_id: int | None = None) -> str:
+                    menu_id: int | str | None = None) -> str:
     """Switch the engine to a panel page by menu path, e.g. 'Trauma/Hemorrhage' or 'Diagnosis/Chart'.
     Pass menu_id=<cmd id> for pages whose menu label is empty (QCP's owner-drawn toolbar buttons)."""
     if menu_id is not None:
@@ -488,8 +574,8 @@ def hummod_stop_state(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
-              wait: bool = True, engine: str = "default") -> str:
+def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = False,
+              wait: bool | str = True, engine: str = "default") -> str:
     """Run the simulation for a Go-menu duration ('1 Min', '10 Min', 'To Next Hour', '1 Day', '30 Days', ...). Waits for completion and returns wall seconds.
 
     times repeats the same Go step (the Go menu has no '30 Sec' entry, so 30 s = times=3 of '10 Sec').
@@ -627,7 +713,7 @@ def hummod_button(panel_path: str, caption: str, engine: str = "default") -> str
 @server.tool()
 @safe
 def hummod_menu_command(item_path: str | None = None, engine: str = "default",
-                        menu_id: int | None = None) -> str:
+                        menu_id: int | str | None = None) -> str:
     """Press any menu entry by path, e.g. 'Restart', 'File/Save Initial Conditions', 'Go/5 Min' (does not wait; use hummod_go for durations).
     Pass menu_id=<cmd id> instead of item_path for entries whose label is empty (owner-drawn toolbar/popup buttons)."""
     b, _ = get_bridge(engine)
@@ -649,7 +735,7 @@ def hummod_menu_command(item_path: str | None = None, engine: str = "default",
 
 @server.tool()
 @safe
-def hummod_shot(name: str, engine: str = "default", restore: bool = True) -> str:
+def hummod_shot(name: str, engine: str = "default", restore: bool | str = True) -> str:
     """Screenshot the engine window to a PNG in the MCP output dir.
 
     Essential for canvas-drawn engines (QCP) where the panels have no widget
@@ -705,8 +791,8 @@ def hummod_popup(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_listbox(dialog_title: str, control_id: int, engine: str = "default",
-                   select: int | None = None, select_text: str | None = None) -> str:
+def hummod_listbox(dialog_title: str, control_id: int | str, engine: str = "default",
+                   select: int | str | None = None, select_text: str | None = None) -> str:
     """Read the items and the current selection of a list box inside an open dialog.
 
     select / select_text pick an item (by index or by substring) and notify the
@@ -806,8 +892,8 @@ def hummod_open_panel(variable: str, engine: str = "default",
 
 @server.tool()
 @safe
-def hummod_click(x: int, y: int, engine: str = "default", button: str = "left",
-                 double: bool = False, method: str = "message") -> str:
+def hummod_click(x: int | str, y: int | str, engine: str = "default", button: str = "left",
+                 double: bool | str = False, method: str = "message") -> str:
     """Click at window-relative (x, y) - the coordinate space of hummod_shot.
 
     method='message' (default) sends WM_LBUTTON*/WM_RBUTTON* to the window and
@@ -819,8 +905,8 @@ def hummod_click(x: int, y: int, engine: str = "default", button: str = "left",
 
 @server.tool()
 @safe
-def hummod_drag(x1: int, y1: int, x2: int, y2: int, engine: str = "default",
-                steps: int = 20) -> str:
+def hummod_drag(x1: int | str, y1: int | str, x2: int | str, y2: int | str,
+                engine: str = "default", steps: int | str = 20) -> str:
     """Drag from (x1,y1) to (x2,y2) in window coordinates - canvas slidebars."""
     b, _ = get_bridge(engine)
     return json.dumps({"ok": True, **b.drag(int(x1), int(y1), int(x2), int(y2), steps=steps)})
@@ -828,8 +914,9 @@ def hummod_drag(x1: int, y1: int, x2: int, y2: int, engine: str = "default",
 
 @server.tool()
 @safe
-def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | None = None,
-                 value: str | None = None, probe_vars: list[str] | None = None,
+def hummod_radio(panel_path: str, ordinal: int | str | None = None,
+                 expected: int | str | None = None,
+                 value: str | None = None, probe_vars: list[str] | dict | None = None,
                  engine: str = "default") -> str:
     """Click a radio button on a panel page. Prefer value='On'/'Off' (label semantics from the profile); or ordinal among radios sorted by control id (expected = total count guardrail).
 
@@ -903,7 +990,8 @@ def _probe_model(b: Bridge, p: Profile, probe_vars: list[str]) -> dict:
 
 @server.tool()
 @safe
-def hummod_action(panel_path: str, ordinal: int, expected: int | None = None, engine: str = "default") -> str:
+def hummod_action(panel_path: str, ordinal: int | str,
+                  expected: int | str | None = None, engine: str = "default") -> str:
     """Click an action button on a panel page - the canvas triggers drawn as '!'
     buttons (e.g. CPR Draw Blood / Shock Now on Intervention/CPR and
     Trauma/Ventricular Fibrillation). Ordinal among action buttons sorted by
@@ -931,7 +1019,7 @@ def hummod_action(panel_path: str, ordinal: int, expected: int | None = None, en
 
 @server.tool()
 @safe
-def hummod_probe_radio(panel_path: str, probe_vars: list[str],
+def hummod_probe_radio(panel_path: str, probe_vars: list[str] | dict,
                        engine: str = "default") -> str:
     """Discover radio-button semantics automatically.
 
@@ -970,7 +1058,8 @@ def hummod_probe_radio(panel_path: str, probe_vars: list[str],
 
 @server.tool()
 @safe
-def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None = None, engine: str = "default") -> str:
+def hummod_edit(panel_path: str, ordinal: int | str, value: str,
+                expected: int | str | None = None, engine: str = "default") -> str:
     """Set an Edit (text) control on a panel page and click its apply button ("> button adjacent by control id). Ords per page from hummod_inspect; expected = total edit count (guardrail)."""
     b, _ = get_bridge(engine)
     _navigate(panel_path, engine)
@@ -995,9 +1084,9 @@ def hummod_edit(panel_path: str, ordinal: int, value: str, expected: int | None 
 
 @server.tool()
 @safe
-def hummod_slider(panel_path: str, ordinal: int | None = None, pos: int = 0,
-                  expected: int | None = None, engine: str = "default",
-                  ctrl_id: int | None = None, label: str | None = None) -> str:
+def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | str = 0,
+                  expected: int | str | None = None, engine: str = "default",
+                  ctrl_id: int | str | None = None, label: str | None = None) -> str:
     """Move a slider on a panel page.
 
     Locate the slider by ordinal (order by control id), by ctrl_id, or by label
@@ -1094,7 +1183,7 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
 
 @server.tool()
 @safe
-def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default") -> str:
+def hummod_snapshot(name: str, vars: list[str] | dict | None = None, engine: str = "default") -> str:
     """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables.
 
     The simulation clock (System.X on HumMod, X on QCP) is always included in
@@ -1156,7 +1245,7 @@ def hummod_load_ics(path: str, engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_get_vars(sol_path: str, names: list[str]) -> str:
+def hummod_get_vars(sol_path: str, names: list[str] | dict) -> str:
     """Read current (last sample) variable values from an exported file.
 
     HumMod exports .SOL (XML) and QCP exports .ICS (text key-value); the
@@ -1170,7 +1259,7 @@ def hummod_get_vars(sol_path: str, names: list[str]) -> str:
 
 @server.tool()
 @safe
-def hummod_history(sol_path: str, vars: list[str], max_points: int = 500) -> str:
+def hummod_history(sol_path: str, vars: list[str] | dict, max_points: int | str = 500) -> str:
     """Time series from a .SOL export: simulation-time axis (System.X) plus one series per requested variable (e.g. 'BloodVol.Vol'), downsampled to max_points (latest sample always included). Plot-ready."""
     try:
         hist = parse_sol_history(sol_path, set(vars), max_points=max_points)
@@ -1182,7 +1271,7 @@ def hummod_history(sol_path: str, vars: list[str], max_points: int = 500) -> str
 
 @server.tool()
 @safe
-def hummod_dismiss_modal(engine: str = "default", prefer: int = 6) -> str:
+def hummod_dismiss_modal(engine: str = "default", prefer: int | str = 6) -> str:
     """Close any engine modal dialog (e.g. Tech window) that blocks automation.
 
     `prefer` is the button id to click when the dialog offers it (6 = IDYES,
