@@ -19,9 +19,11 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import typing
 from datetime import datetime
+from uuid import uuid4
 
 from mcp.server.mcpserver import MCPServer
 
@@ -40,6 +42,11 @@ except ImportError:  # run as a plain script: python oh_my_hummod/server.py
 ENGINE_DIR = os.environ.get("HUMMOD_ENGINE_DIR", os.path.join(os.getcwd(), "engine"))
 PROFILE_NAME = os.environ.get("HUMMOD_PROFILE", "")
 OUTDIR = os.environ.get("HUMMOD_OUTDIR", os.path.join(os.getcwd(), "mcp-exports"))
+
+_ASYNC_GO_JOBS: dict[str, dict] = {}
+_ASYNC_GO_LOCK = threading.Lock()
+_EXPORT_LOCK = threading.Lock()
+_RESERVED_EXPORTS: set[str] = set()
 
 # instructions: returned in the MCP handshake (InitializeResult.instructions).
 # A client MAY fold it into the system prompt - the wording stays compact and
@@ -645,7 +652,12 @@ def hummod_stop_state(engine: str = "default") -> str:
     stop_id = p.stop_cmd_id
     if stop_id is None:
         stop_id = b.menu_tree().find("Stop").cmd_id
-    return json.dumps({"stop_enabled": bool(b.menu_item_enabled(stop_id))})
+    out = {"stop_enabled": bool(b.menu_item_enabled(stop_id))}
+    with _ASYNC_GO_LOCK:
+        jobs = [dict(v) for v in _ASYNC_GO_JOBS.values() if v["engine"] == engine]
+    if jobs:
+        out["async_jobs"] = jobs
+    return json.dumps(out)
 
 
 def _csv_list(s: str | None) -> list[str]:
@@ -716,10 +728,39 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
         before_status = b.status_text()
         b.command(node.cmd_id)
         if not wait:
-            out = {"ok": True, "ran": duration_label, "times": times,
-                   "waited": False,
-                   "note": ("run started; poll hummod_stop_state / hummod_busy until "
-                            "the engine is idle, then hummod_snapshot for the state"),
+            job_id = uuid4().hex
+            job = {"job_id": job_id, "engine": engine, "requested_times": times,
+                   "started_times": 1, "completed_times": 0, "state": "running",
+                   "failed": None}
+            with _ASYNC_GO_LOCK:
+                _ASYNC_GO_JOBS[job_id] = job
+
+            def finish_async() -> None:
+                try:
+                    first = _wait_done(engine, before_status=before_status)
+                    if not first.get("started", False):
+                        raise RuntimeError("engine did not report the first run as started")
+                    for _ in range(1, times):
+                        before_next = b.status_text()
+                        with _ASYNC_GO_LOCK:
+                            job["started_times"] += 1
+                        b.command(node.cmd_id)
+                        _wait_done(engine, before_status=before_next)
+                        with _ASYNC_GO_LOCK:
+                            job["completed_times"] += 1
+                    with _ASYNC_GO_LOCK:
+                        job["completed_times"] = times
+                        job["state"] = "completed"
+                except Exception as exc:
+                    with _ASYNC_GO_LOCK:
+                        job["state"] = "failed"
+                        job["failed"] = str(exc)
+
+            threading.Thread(target=finish_async, name=f"hummod-go-{job_id[:8]}", daemon=True).start()
+            out = {"ok": True, "job_id": job_id, "ran": duration_label,
+                   "requested_times": times, "started_times": 1,
+                   "completed_times": 0, "state": "running", "waited": False,
+                   "note": "poll hummod_stop_state / hummod_busy; completion is reported by job state",
                    "wall_seconds": round(time.time() - t0, 1)}
             if verify:
                 out["sim_time_before"] = t_before
@@ -1281,6 +1322,7 @@ def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | 
         note = p.quirks.get("slider_note")
     out = {"ok": True, "pos": pos, "located_by": how,
            "ctrl_id": target.ctrl_id, "slider_count": len(sliders),
+           "state": "message_sent", "verified": False,
            "verify": "snapshot the model value", "quirk": note}
     if resolved_value is not None:
         out["requested_value"] = float(value)
@@ -1348,10 +1390,34 @@ def hummod_set_param(panel_path: str, name: str, value: float | str,
     if target is None:
         raise RuntimeError(f"control {ctrl_id} not found on {panel_path!r}")
     b.set_slider(target.hwnd, _parent_of(target.hwnd), pos, commit_endscroll=True)
+    verified = False
+    readback = None
+    var_name = slot.get("var")
+    if var_name:
+        try:
+            path = _export_snapshot(b, p, f"_param_verify_{uuid4().hex}")
+            vals = parse_export(path, {str(var_name).lower()})
+            readback = next((float(v) for k, v in vals.items()
+                             if k.lower() == str(var_name).lower()), None)
+            verified = readback is not None and abs(readback - got) <= 1e-6
+            if readback is not None and not verified:
+                raise RuntimeError(
+                    f"parameter message sent but model readback differs: requested={want}, "
+                    f"mapped={got}, readback={readback}")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            return json.dumps({"ok": True, "panel": panel_path, "param": key,
+                               "requested_value": want, "value_at_pos": got, "pos": pos,
+                               "ctrl_id": ctrl_id, "var": var_name,
+                               "state": "message_sent_unverified", "verified": False,
+                               "verification_error": str(exc)})
     return json.dumps({"ok": True, "panel": panel_path, "param": key,
                        "requested_value": want, "value_at_pos": got, "pos": pos,
-                       "ctrl_id": ctrl_id, "var": slot.get("var"),
-                       "verify": f"snapshot {slot.get('var')!r}"})
+                       "ctrl_id": ctrl_id, "var": var_name,
+                       "state": "verified" if verified else "message_sent_unverified",
+                       "verified": verified, "readback": readback,
+                       "verify": f"snapshot {var_name!r}" if var_name else "no profile readback variable"})
 
 
 def _parent_of(hwnd: int) -> int:
@@ -1364,20 +1430,40 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
     save_id = p.file.get("save_sol")
     if save_id is not None:
-        path = os.path.join(OUTDIR, safe_name + (".SOL" if not safe_name.lower().endswith(".sol") else ""))
-        if os.path.exists(path):
-            path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".SOL")
+        path = _unique_export_path(safe_name, ".SOL")
         b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids),
                            tail_markers=("</solution>",))
     else:  # QCP family: ICs snapshot instead of SOL
         save_id = p.file.get("save_ics")
         if save_id is None:
             save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
-        path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
-        if os.path.exists(path):
-            path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
+        path = _unique_export_path(safe_name, ".ICS")
         b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
     return path
+
+
+def _unique_export_path(name: str, extension: str) -> str:
+    """Return a new path without ever selecting an existing export.
+
+    Microseconds and a random suffix avoid same-second collisions. The final
+    existence check is repeated immediately before the native dialog opens;
+    callers must still treat the returned path as reserved for that export.
+    """
+    base, ext = os.path.splitext(name)
+    if ext.lower() == extension.lower():
+        name = base
+    with _EXPORT_LOCK:
+        candidate = os.path.join(OUTDIR, name + extension)
+        if not os.path.exists(candidate) and candidate not in _RESERVED_EXPORTS:
+            _RESERVED_EXPORTS.add(candidate)
+            return candidate
+        for _ in range(1000):
+            candidate = os.path.join(
+                OUTDIR, f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid4().hex[:8]}{extension}")
+            if not os.path.exists(candidate) and candidate not in _RESERVED_EXPORTS:
+                _RESERVED_EXPORTS.add(candidate)
+                return candidate
+    raise RuntimeError("could not allocate a unique export path")
 
 
 @server.tool()
@@ -1422,9 +1508,7 @@ def hummod_save_ics(name: str, engine: str = "default") -> str:
     if save_id is None:
         save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-    path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
-    if os.path.exists(path):
-        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
+    path = _unique_export_path(safe_name, ".ICS")
     b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
     return json.dumps({"ok": True, "path": path})
 

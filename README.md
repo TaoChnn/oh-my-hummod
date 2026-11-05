@@ -172,8 +172,12 @@ ZCode keeps MCP servers in `~/.zcode/cli/config.json` under `mcp.servers`:
   cache both the tool list and the loaded module for the life of a session.
 - Some clients cap tool-call duration (commonly 30 s). Long runs
   (`hummod_go` on a week-scale step) can exceed that; `hummod_go` accepts
-  `wait=False` to return immediately, then poll with `hummod_busy` and fetch
-  results with `hummod_snapshot`.
+  `wait=False` and returns a job id plus requested/started/completed counts.
+  Poll `hummod_busy` or `hummod_stop_state` until the job is `completed` or
+  `failed`, then fetch results with `hummod_snapshot`.
+- Parameter tools report `state=message_sent_unverified` unless a profile
+  variable can be exported and read back. A successful Windows message alone
+  does not prove that the model accepted the value.
 
 ## Design: discovery first, profiles for the rest
 
@@ -297,6 +301,10 @@ bypass this server to drive the engine directly.
 | **avphummod** (Modular AVP build) | `avphummod` | ✅ engine_smoke passed - same lineage; ships Model Solver.exe + ScriptedController.exe |
 | HumMod standalone **1.6.1** | `hummod_1.6.1` | ✅ engine_smoke passed (Clinic/Hemorrhage, SOL-verified radio toggle, Go 1 Min) |
 | **QCP 2005** | `qcp_2005` | ✅ core validated over MCP (canvas panels via command ids, View groups, ICS snapshots); no SOL export (QCP has none) and no time series - snapshot each point instead |
+
+The validation marks describe upstream field trials recorded in this
+repository and require the corresponding Windows engine files. Run the smoke
+test on the target computer before treating an engine as validated there.
 
 Same-lineage builds (the whole 3.x custom family) share the 3.0.4 menu
 skeleton and cost **zero code** to add - a thin profile JSON at most.
