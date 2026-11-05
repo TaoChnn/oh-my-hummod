@@ -88,6 +88,17 @@ async def main() -> int:
             check("get_vars names wrapped in {'item': 'x'}",
                   r.get("ok") is not False and "values" in r, str(r)[:160])
 
+            # 7. a slider must also commit position 0 (HumMod ignores SB_LINELEFT)
+            await call("hummod_navigate", {"panel_path": "Lifestyle/Air Supply"})
+            r = await call("hummod_slider", {"panel_path": "Lifestyle/Air Supply",
+                                             "ctrl_id": "13149", "pos": "0"})
+            check("slider pos 0 accepted", r.get("ok") is True, str(r)[:160])
+            v = await call("hummod_snapshot", {"name": "lax_slider0",
+                                               "vars": ["AirSupply-GasTanks.N2Valve(%)"]})
+            val = v.get("values", {}).get("AirSupply-GasTanks.N2Valve(%)")
+            check("slider commits position 0 to the model",
+                  val is not None and abs(float(val)) < 0.001, f"N2Valve={val}")
+
     print("LAX_ARGS_OK" if not failures else f"FAILURES: {failures}")
     return 1 if failures else 0
 

@@ -440,8 +440,18 @@ class Bridge:
         SB_LINELEFT at 0 is a no-op. The control's reported thumb position can
         be unsynced (0) before QCP has painted the page, so never trust it to
         mean "already at 0": always overshoot with a fixed message budget.
+
+        HumMod 1.6.1 is the other way round: its scrollbars only implement
+        SB_THUMBPOSITION/SB_THUMBTRACK and ignore SB_LINELEFT entirely, so the
+        line-scroll fallback never moves them to 0 (observed on the Air Supply
+        gas-tank valves). Post the position first - every engine honours that -
+        and keep the line-scrolls afterwards purely as the QCP fallback (they
+        are no-ops once the thumb already sits at 0).
         """
         if pos == 0:
+            user32.PostMessageW(parent_hwnd, WM_HSCROLL,
+                                (0 << 16) | SB_THUMBPOSITION, ctrl_hwnd)
+            time.sleep(0.06)
             for _ in range(60):
                 user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_LINELEFT, ctrl_hwnd)
                 time.sleep(0.04)
