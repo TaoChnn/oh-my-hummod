@@ -435,17 +435,24 @@ class Bridge:
         """Move a ScrollBar thumb; commit behaviour is engine-dependent (see profile).
 
         QCP 2005 ignores SB_THUMBPOSITION with position 0 (the value never
-        commits to the minimum), so pos 0 is set by repeated SB_LINELEFT
-        line-scrolls instead - each of those commits immediately, and
-        SB_LINELEFT at 0 is a no-op. The control's reported thumb position can
-        be unsynced (0) before QCP has painted the page, so never trust it to
-        mean "already at 0": always overshoot with a fixed message budget.
+        commits to the minimum), so pos 0 falls back to repeated SB_LINELEFT
+        line-scrolls - each of those commits immediately, and SB_LINELEFT at 0
+        is a no-op. The control's reported thumb position can be unsynced (0)
+        before QCP has painted the page, so never trust it to mean "already
+        at 0": always overshoot with a fixed message budget.
+
+        HumMod 3.0.4 maplist sliders are the mirror image: SB_THUMBPOSITION
+        commits every list index, but SB_LINELEFT is ignored entirely (seen
+        2026-11-05 on Trauma/Pericardium/Pericardial Hemorrhage - 60
+        line-scrolls with the thumb at maplist index 1 never moved the model
+        value, while THUMBPOSITION committed indices 1-4). So every move,
+        INCLUDING position 0, starts with SB_THUMBPOSITION(+ENDSCROLL) and the
+        SB_LINELEFT burst only follows as the QCP fallback: on 3.0.4 the burst
+        is a no-op (the value is already at index 0 and line-scrolls are
+        ignored anyway), on QCP THUMBPOSITION 0 is ignored and the burst does
+        the work. Any ENDSCROLL mis-commit on QCP with an unsynced thumb
+        converges to 0 too, which is exactly the pos==0 request.
         """
-        if pos == 0:
-            for _ in range(60):
-                user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_LINELEFT, ctrl_hwnd)
-                time.sleep(0.04)
-            return
         user32.PostMessageW(parent_hwnd, WM_HSCROLL,
                             (pos << 16) | SB_THUMBPOSITION, ctrl_hwnd)
         time.sleep(0.06)
@@ -453,6 +460,10 @@ class Bridge:
             user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_ENDSCROLL, 0)
             user32.PostMessageW(ctrl_hwnd, WM_HSCROLL, SB_ENDSCROLL, 0)
         time.sleep(0.1)
+        if pos == 0:
+            for _ in range(60):
+                user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_LINELEFT, ctrl_hwnd)
+                time.sleep(0.04)
 
     # ---------- run / completion ----------
 
