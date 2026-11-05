@@ -27,6 +27,8 @@ class Profile:
     quirks: dict = field(default_factory=dict)
     page_ids: dict = field(default_factory=dict)   # optional curated panel path -> cmd id
     slider_maps: dict = field(default_factory=dict)  # panel path -> pos->value semantics for canvas sliders
+    slider_value_lists: dict = field(default_factory=dict)  # panel path -> ctrl_id -> {"values": [v0, v1, ...]}
+    param_slots: dict = field(default_factory=dict)  # panel path -> parameter label -> {"ctrl_id": n, "var": name}
     radio_semantics: dict = field(default_factory=dict)  # panel path -> {"on": ordinal, "off": ordinal, ...}
     action_semantics: dict = field(default_factory=dict)  # panel path -> {"0": "meaning", ...}
     menu_aliases: dict = field(default_factory=dict)  # canonical path -> build-specific path
