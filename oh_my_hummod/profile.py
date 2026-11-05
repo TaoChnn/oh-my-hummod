@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 
 @dataclass
@@ -33,6 +33,7 @@ class Profile:
     action_semantics: dict = field(default_factory=dict)  # panel path -> {"0": "meaning", ...}
     menu_aliases: dict = field(default_factory=dict)  # canonical path -> build-specific path
     panels: dict = field(default_factory=dict)     # version-specific panel paths for tests/demos
+    extra: dict = field(default_factory=dict)      # profile keys this library does not know yet
 
     @classmethod
     def load(cls, path_or_name: str) -> "Profile":
@@ -44,4 +45,11 @@ class Profile:
                 path_or_name = builtin
         with open(path_or_name, encoding="utf-8") as f:
             data = json.load(f)
-        return cls(**data)
+        # Unknown keys are kept, not fatal: a profile may record facts that a
+        # newer library does not consume yet (field trials add them as they
+        # are discovered). Silently dropping them would lose that evidence.
+        known = {f.name for f in fields(cls)}
+        extra = {k: v for k, v in data.items() if k not in known}
+        obj = cls(**{k: v for k, v in data.items() if k in known})
+        obj.extra = extra
+        return obj
