@@ -19,12 +19,28 @@
     "go_to_next_semantics": "Verified live in the 4.3.1 hemorrhage run: 'To Next Hour'/'To Next Day'/'To Next 30 Days' advance to the next integer multiple of the unit (from X=10 -> 60, from 60 -> 1440, from 1440 -> 43200 min); all landed exactly on the protocol timepoints (checked via System.X).",
     "clinic_hemorrhage_rate_slider": "Clinic/Hemorrhage 'Target Rate' slider (ScrollBar ctrl_id 15140, listname Hemorrhage.TargetRate, repeatlist 100 reps x stepsize 1.0): pos == mL/Min, so pos 100 = 100 mL/Min. Commits via THUMBPOSITION+ENDSCROLL (verified Hemorrhage.TargetRate = 100.0 after hummod_slider).",
     "clinic_hemorrhage_controls": "Clinic/Hemorrhage page: 2 radios (ordinal 0 = Switch Off, 1 = Switch On, ctrl ids 15113/15115), 1 slider (15140), 1 action button ('Reset Volume', id 15136). Radio/slider changes on this page raised no application-modal MessageBox during the 4.3.1 run.",
-    "var_name_diffs_vs_304": "Model variable names differ from 3.0.4: sympathetic level = SympsCNS.NA(Hz) / GangliaGeneral.NA(Hz) (no Ganglia-Sympathetic.level), cardiac ganglion variable does not exist (GangliaGeneral.NA(Hz) is the closest), aldosterone = AldoPool.[Aldo(nG/dL)] (not MineralocorticoidReceptor.[Aldo(nG/dL)-Plasma]). EPOPool.[EPO] is live-computed in 1.6.1 (frozen in 3.0.4)."
+    "var_name_diffs_vs_304": "Model variable names differ from 3.0.4: sympathetic level = SympsCNS.NA(Hz) / GangliaGeneral.NA(Hz) (no Ganglia-Sympathetic.level), cardiac ganglion variable does not exist (GangliaGeneral.NA(Hz) is the closest), aldosterone = AldoPool.[Aldo(nG/dL)] (not MineralocorticoidReceptor.[Aldo(nG/dL)-Plasma]). EPOPool.[EPO] is live-computed in 1.6.1 (frozen in 3.0.4).",
+    "var_names_pneumothorax": "Pneumothorax run (4.3.12) variable names: thorax = RightHemithorax./LeftHemithorax.{Pressure,LungInflation,ChestOpen,NormalPressure} + Thorax.{AvePressure,LungInflation,PressureGradientRightLeft,RightLungFlowFract,LeftLungFlowFract}; CO = CardiacOutput.Flow(L/Min) + .StrokeVolume; HR = Heart-Rate.Rate (= SANode-Rate.Rate); gases = PO2Artys.Pressure / PO2Artys.Sat(%) / CO2Artys.Pressure / BloodPh.ArtysPh (no BloodPhValues.* in 1.6.1); blood = BloodVol.Vol(L) / BloodVol.Hct(%) / PlasmaVol.Vol(L) / RBCVol.Vol(L); ventilation = Breathing.TotalVentilation(L) / Breathing.AlveolarVentilation(L) / Breathing.RespRate / Breathing.TidalVolume; drive = RespiratoryCenter-Integration.TotalDrive; chemoreflex = Chemoreceptors.PO2Effect; shunt = LungBloodFlow.{Total,AlveolarVentilated,RightLungTotal,LeftLungTotal,RightLungVentilated,LeftLungVentilated,TotalShunt,RightLungShunt,Right-LeftShunt}; lung O2 = LungO2.PAlveolar + LungVeinO2.PO2 (AVP calls it Lung_O2.pO2); pressures = SystemicArtys.{Pressure,SBP,DBP} / PulmArty.Pressure / LeftAtrium.Pressure; inspired air = AirSupply-InspiredAir.{O2(%),PO2}; gas tanks = AirSupply-GasTanks.{Switch,O2Valve(%),N2Valve(%),O2(%),N2(%)}.",
+    "thorax_page_controls": "Physiology/Lungs/Thorax (menu id 154, the manual's path exists in 1.6.1 - AVP has no Physiology menu and calls it Respiration/Thorax): 4 radios (ctrl 4228 = right Closed, 4230 = right Open, 4241 = left Closed, 4243 = left Open; ordinal by ctrl id 0..3) and 2 sliders (4224 = right NormalPressure, 4237 = left NormalPressure). ChestOpen is a model parm: TRUE sets RightHemithorax.Pressure = 0 and LungInflation = 0. The radio check state is not readable - verify with RightHemithorax.Pressure (closed -4 -> open 0) and .LungInflation (1 -> 0).",
+    "clinic_pneumothorax_page": "1.6.1 also has a clinical page Clinic/Pneumothorax (menu id 542, panel Clinic_Pneumothorax) with the same Right/Left Hemithorax controls (radios 15439 = right Closed, 15441 = right Open, 15452 = left Closed, 15454 = left Open; sliders 15435 / 15448). It is a bitmap page with a Chart button; the model variables are identical to Physiology/Lungs/Thorax, so either page drives the same experiment.",
+    "thorax_change_no_modal": "Changing the Thorax radio (Right Hemithorax Chest Open/Closed) raised NO application-level message box in the 4.3.12 run - dismiss_modal found nothing after either click. The known 1.6.1 'every parameter change pops a modal' behaviour did not reproduce for radio switches.",
+    "inspired_o2_route": "The inspired O2 fraction can only be raised through the gas tanks: Lifestyle/Air Supply (menu id 474) shows Inspired Air as a read-only table; the GasTanks group has a Switch radio (ordinal 1 = On) and valve sliders (ctrl 13146 = O2, 13149 = N2, 13152 = CO2, 13155 = CO, 13160 = Anesthetic; 13170 = pressure chamber). With Switch On, AirSupply-GasTanks.O2(%) = 100*O2Valve/(sum of valves), so pure O2 = O2 valve 100 + N2 valve 0 (O2Valve 100 alone gives only 55.9 % O2). Inspired PO2 then reads 760 mmHg.",
+    "slider_pos_zero": "HumMod scrollbars implement SB_THUMBPOSITION/SB_THUMBTRACK only and ignore SB_LINELEFT, so a slider asked for position 0 stays where it was until the server posts SB_THUMBPOSITION with position 0 as well (fixed in oh-my-hummod commit 9745aa6).",
+    "no_hypoxia_sympathetic_path": "Model fact (Structure/Nerves/Chemoreceptors.DES): Chemoreceptors.SympsEffect is a function of AlphaAgonism (which follows the existing GangliaGeneral.NA tone) - NOT of PO2Effect. So in 1.6.1 the hypoxic chemoreceptor response is purely ventilatory: a pneumothorax drives Chemoreceptors.PO2Effect 0.50 -> 7.4 and the respiratory drive 0.94 -> 5.1, but the sympathetic tone (GangliaGeneral.NA(Hz) 1.51 -> 1.53) and the heart rate (72 -> 72) barely move. The AVP build shows the opposite (HR 72 -> 108, MAP 87 -> 141), so cardiovascular compensation for hypoxia differs strongly between the two builds.",
+    "thorax_flow_redistribution": "Both 1.6.1 and AVP redistribute lung blood flow mechanically: Structure/Lungs/Thorax.DES maps the right-left pleural pressure gradient through the PressureGradientOnFlowDist curve onto Thorax.RightLungFlowFract (0.5 -> 0.381 with the right chest open). It is a fixed mechanical rule - no hypoxic pulmonary vasoconstriction, so the shunt fraction does not change with time (AVP's conclusion, confirmed here)."
   },
-  "page_ids": { "Clinic/Hemorrhage": 532 },
+  "page_ids": {
+    "Clinic/Hemorrhage": 532,
+    "Clinic/Pneumothorax": 542,
+    "Physiology/Lungs/Thorax": 154,
+    "Lifestyle/Air Supply": 474
+  },
   "radio_semantics": {
     "Clinic/Hemorrhage": { "off": 0, "on": 1 },
     "Clinic/Ventilator": { "off": 0, "on": 1 },
+    "Clinic/Pneumothorax": { "right_closed": 0, "right_open": 1, "left_closed": 2, "left_open": 3 },
+    "Physiology/Lungs/Thorax": { "right_closed": 0, "right_open": 1, "left_closed": 2, "left_open": 3 },
+    "Lifestyle/Air Supply": { "off": 0, "on": 1 },
     "Lifestyle/Exercise/Control": { "resting": 0, "exercise_bike": 1, "treadmill": 2, "treadmill_run": 3, "treadmill_walk": 4 }
   },
   "panels": {
@@ -32,6 +48,9 @@
     "chart": "Clinic/Chart",
     "ventilator": "Clinic/Ventilator",
     "exercise_control": "Lifestyle/Exercise/Control",
-    "skeletal_muscle_circulation": "Organs/Skeletal Muscle/Circulation"
+    "skeletal_muscle_circulation": "Organs/Skeletal Muscle/Circulation",
+    "thorax": "Physiology/Lungs/Thorax",
+    "pneumothorax_clinic": "Clinic/Pneumothorax",
+    "air_supply": "Lifestyle/Air Supply"
   }
 }
