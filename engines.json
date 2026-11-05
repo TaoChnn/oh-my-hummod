@@ -1,6 +1,9 @@
 {
   "3.0.4": "C:/path/to/engine",
-  "avp": "C:/path/to/avphummod",
+  "avp": {
+    "dir": "C:/path/to/avphummod",
+    "profile": "avphummod"
+  },
   "bat": {
     "dir": "C:/path/to/HumMod-BAT",
     "profile": "hummod_bat"

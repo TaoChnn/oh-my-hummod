@@ -1145,7 +1145,8 @@ def hummod_edit(panel_path: str, ordinal: int | str, value: str,
 @safe
 def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | str = 0,
                   expected: int | str | None = None, engine: str = "default",
-                  ctrl_id: int | str | None = None, label: str | None = None) -> str:
+                  ctrl_id: int | str | None = None, label: str | None = None,
+                  value: float | str | None = None) -> str:
     """Move a slider on a panel page.
 
     Locate the slider by ordinal (order by control id), by ctrl_id, or by label
@@ -1153,6 +1154,11 @@ def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | 
     so owner-drawn sliders are addressable too).
     Pages often mix parameter sliders with plain scroll bars; hummod_inspect
     lists both with ctrl_id, rect and position.
+    value= asks for the parameter VALUE instead of a raw scroll index: the
+    engine-specific index->value table from the profile (slider_value_lists)
+    is used to find the matching index.  That is the only way to hit a
+    non-default value on engines whose steppers have an irregular scale
+    (AVP v3.1.0 Lifestyle/Diet/Goal: index 11 -> 20, 30 -> 210, 60 -> 1500).
     WARNING: some engines (3.0.4) accept the thumb move but do not commit the
     model value - verify via hummod_snapshot and prefer XML parm edits there.
     """
@@ -1205,13 +1211,89 @@ def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | 
     else:
         raise RuntimeError("provide ordinal, ctrl_id or label")
 
+    resolved_value = None
+    if value is not None:
+        want = float(value)
+        pos, resolved_value = _pos_for_value(p, panel_path, target.ctrl_id, want)
+        how = f"{how}+value"
+
     b.set_slider(target.hwnd, _parent_of(target.hwnd), pos, commit_endscroll=True)
     note = None
     if p.quirks.get("slider_commits") is False:
         note = p.quirks.get("slider_note")
-    return json.dumps({"ok": True, "pos": pos, "located_by": how,
-                       "ctrl_id": target.ctrl_id, "slider_count": len(sliders),
-                       "verify": "snapshot the model value", "quirk": note})
+    out = {"ok": True, "pos": pos, "located_by": how,
+           "ctrl_id": target.ctrl_id, "slider_count": len(sliders),
+           "verify": "snapshot the model value", "quirk": note}
+    if resolved_value is not None:
+        out["requested_value"] = float(value)
+        out["value_at_pos"] = resolved_value
+    return json.dumps(out)
+
+
+def _pos_for_value(p: Profile, panel_path: str, ctrl_id: int, want: float):
+    """Map a requested parameter value to a scroll index via the profile table.
+
+    The profile carries, per panel and per scroll-bar control id, the list of
+    values the engine produces for each scroll index (measured, because the
+    scale is engine-specific and irregular).  Returns (index, value_at_index).
+    """
+    table = (p.slider_value_lists or {}).get(panel_path, {})
+    entry = table.get(str(ctrl_id)) or table.get(ctrl_id)
+    if not entry:
+        raise RuntimeError(
+            f"no slider value table for {panel_path!r} ctrl_id {ctrl_id}; "
+            f"known: {sorted(table)}")
+    values = entry.get("values") if isinstance(entry, dict) else entry
+    if not values:
+        raise RuntimeError(f"empty slider value table for {panel_path!r} ctrl_id {ctrl_id}")
+    exact = [i for i, v in enumerate(values) if abs(float(v) - want) < 1e-9]
+    if exact:
+        return exact[0], float(values[exact[0]])
+    best = min(range(len(values)), key=lambda i: abs(float(values[i]) - want))
+    return best, float(values[best])
+
+
+@server.tool()
+@safe
+def hummod_set_param(panel_path: str, name: str, value: float | str,
+                     engine: str = "default", exact: bool | str = False) -> str:
+    """Set a named model parameter through the panel's own stepper.
+
+    `name` is the parameter label as printed on the page (e.g. 'Salt',
+    'Block (%)'); the profile's param_slots maps it to the page's scroll-bar
+    control id, and slider_value_lists maps that control id to the
+    index->value scale, so the stepper can be driven to the requested VALUE
+    without knowing the raw index.  This is what makes AVP v3.1.0's
+    Lifestyle/Diet/Goal electrolyte goals settable from the GUI.
+    """
+    b, p = get_bridge(engine)
+    _navigate(panel_path, engine)
+    slots = (p.param_slots or {}).get(panel_path, {})
+    key = None
+    for k in slots:
+        if k.strip().lower() == name.strip().lower():
+            key = k
+            break
+    if key is None:
+        raise RuntimeError(f"parameter {name!r} not known on {panel_path!r}; "
+                           f"known: {sorted(slots)}")
+    slot = slots[key]
+    ctrl_id = int(slot["ctrl_id"])
+    want = float(value)
+    pos, got = _pos_for_value(p, panel_path, ctrl_id, want)
+    if exact and abs(got - want) > 1e-9:
+        raise RuntimeError(f"value {want!r} is not reachable on {key!r} "
+                           f"(closest {got!r} at index {pos})")
+    sliders = sorted([c for c in b.controls() if c.cls == "ScrollBar"],
+                     key=lambda c: c.ctrl_id)
+    target = next((c for c in sliders if c.ctrl_id == ctrl_id), None)
+    if target is None:
+        raise RuntimeError(f"control {ctrl_id} not found on {panel_path!r}")
+    b.set_slider(target.hwnd, _parent_of(target.hwnd), pos, commit_endscroll=True)
+    return json.dumps({"ok": True, "panel": panel_path, "param": key,
+                       "requested_value": want, "value_at_pos": got, "pos": pos,
+                       "ctrl_id": ctrl_id, "var": slot.get("var"),
+                       "verify": f"snapshot {slot.get('var')!r}"})
 
 
 def _parent_of(hwnd: int) -> int:
