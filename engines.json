@@ -1,7 +1,10 @@
 {
   "3.0.4": "C:/path/to/engine",
   "avp": "C:/path/to/avphummod",
-  "bat": "C:/path/to/HumMod-BAT",
+  "bat": {
+    "dir": "C:/path/to/HumMod-BAT",
+    "profile": "hummod_bat"
+  },
   "1.6.1": "C:/path/to/HumMod-standalone-1.6.1",
   "qcp": "C:/path/to/QCP-2005"
 }
