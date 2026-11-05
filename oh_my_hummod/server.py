@@ -40,23 +40,39 @@ OUTDIR = os.environ.get("HUMMOD_OUTDIR", os.path.join(os.getcwd(), "mcp-exports"
 server = MCPServer("hummod")
 
 
-def _load_engines() -> dict[str, str]:
-    """Engine registry: key -> engine folder.
+def _load_engines() -> dict[str, dict]:
+    """Engine registry: key -> {"dir": <folder>, "profile": <profile name or None>}.
 
     Sources (later wins): env HUMMOD_ENGINES (JSON), engines.json in the repo
     root, and HUMMOD_ENGINE_DIR as the "default" entry.
+
+    An entry may be a plain folder string or an object:
+        {"bat": "C:/path"}                       -> profile auto-detected
+        {"bat": {"dir": "C:/path",
+                 "profile": "hummod_bat"}}       -> profile pinned
+
+    The object form matters for builds that share an EXE (HumMod-BAT and
+    Clemmer Salt 3.0.4 ship the *same* HumMod.EXE), where menu-based detection
+    cannot tell them apart and would silently pick the wrong profile.
     """
-    engines: dict[str, str] = {}
+    raw: dict = {}
     for cand in (os.path.join(os.getcwd(), "engines.json"),
                  os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engines.json")):
         if os.path.exists(cand):
             with open(cand, encoding="utf-8") as f:
-                engines.update(json.load(f))
+                raw.update(json.load(f))
             break
-    raw = os.environ.get("HUMMOD_ENGINES")
-    if raw:
-        engines.update(json.loads(raw))
-    engines["default"] = ENGINE_DIR
+    env = os.environ.get("HUMMOD_ENGINES")
+    if env:
+        raw.update(json.loads(env))
+    raw["default"] = ENGINE_DIR
+
+    engines: dict[str, dict] = {}
+    for key, val in raw.items():
+        if isinstance(val, dict):
+            engines[key] = {"dir": val.get("dir", ""), "profile": val.get("profile") or None}
+        else:
+            engines[key] = {"dir": val, "profile": None}
     return engines
 
 
@@ -87,8 +103,10 @@ def _profile_from_engine_dir(engine_dir: str) -> Profile | None:
     return None
 
 
-def _detect_profile(b: Bridge) -> Profile:
-    """Identify the engine build: VERSION file first, then the live top-level menu."""
+def _detect_profile(b: Bridge, pinned: str | None = None) -> Profile:
+    """Identify the engine build: pinned name first, then VERSION file, then the live top-level menu."""
+    if pinned:
+        return Profile.load(pinned)
     p = _profile_from_engine_dir(b.engine_dir)
     if p is not None:
         return p
@@ -112,7 +130,8 @@ def get_bridge(engine: str = "default") -> tuple[Bridge, Profile]:
         _bridges.pop(engine, None)
     if engine not in _ENGINES:
         raise RuntimeError(f"unknown engine {engine!r}; known: {sorted(_ENGINES)}")
-    d = _ENGINES[engine]
+    d = _ENGINES[engine]["dir"]
+    pinned = _ENGINES[engine]["profile"]
     if PROFILE_NAME and engine == "default":
         p = Profile.load(PROFILE_NAME)
         b = Bridge(d, exe_name=p.exe_names[0])
@@ -123,7 +142,7 @@ def get_bridge(engine: str = "default") -> tuple[Bridge, Profile]:
         b = Bridge(d)  # exe name discovered from the running process
         if not b.attach():
             raise RuntimeError(f"engine {engine!r} not running; call hummod_start first")
-        p = _detect_profile(b)
+        p = _detect_profile(b, pinned)
     b.wait_ready(p.bind_marker)
     _bridges[engine] = (b, p)
     return b, p
@@ -226,7 +245,9 @@ def hummod_engines() -> str:
     """List all registered engines (from engines.json) with running state and detected profile."""
     out = {}
     for key, d in _ENGINES.items():
-        entry: dict = {"dir": d}
+        entry: dict = {"dir": d["dir"]}
+        if d["profile"]:
+            entry["profile_pinned"] = d["profile"]
         try:
             b, p = get_bridge(key)
             entry.update({"running": True, "pid": b.pid, "profile": p.name})
@@ -243,10 +264,11 @@ def hummod_status(engine: str = "default") -> str:
     try:
         b, p = get_bridge(engine)
         return json.dumps({"running": True, "pid": b.pid, "profile": p.name,
-                           "engine": engine, "engine_dir": _ENGINES[engine]})
+                           "engine": engine, "engine_dir": _ENGINES[engine]["dir"]})
     except Exception as e:
         return json.dumps({"running": False, "error": str(e),
-                           "engine": engine, "engine_dir": _ENGINES.get(engine)})
+                           "engine": engine,
+                           "engine_dir": (_ENGINES.get(engine) or {}).get("dir")})
 
 
 @server.tool()
@@ -263,7 +285,7 @@ def hummod_start(key: str = "default", hidden: bool = True) -> str:
         raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
     if key in _bridges and _bridges[key][0].main and user32.IsWindow(_bridges[key][0].main):
         return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
-    b = Bridge(_ENGINES[key])  # exe name discovered from the folder
+    b = Bridge(_ENGINES[key]["dir"])  # exe name discovered from the folder
     pid = b.start(hidden=hidden)
     # HUMMOD_PROFILE is the *default* engine's profile override (it only ever
     # described the HUMMOD_ENGINE_DIR build). Applying it to NAMED engine keys
@@ -277,7 +299,7 @@ def hummod_start(key: str = "default", hidden: bool = True) -> str:
         p = None
         for _ in range(30):  # page rows appear only after "Starting Model ... Binding ..."
             try:
-                p = _detect_profile(b)
+                p = _detect_profile(b, _ENGINES[key]["profile"])
                 break
             except RuntimeError:
                 time.sleep(1.0)
@@ -313,7 +335,8 @@ def hummod_restart_engine(engine: str = "default") -> str:
     """
     if engine not in _ENGINES:
         raise RuntimeError(f"unknown engine {engine!r}; known: {sorted(_ENGINES)}")
-    d = _ENGINES[engine]
+    d = _ENGINES[engine]["dir"]
+    pinned = _ENGINES[engine]["profile"]
     exe_name = None
     old = _bridges.get(engine)
     if old is not None:
@@ -335,7 +358,7 @@ def hummod_restart_engine(engine: str = "default") -> str:
         p = None
         for _ in range(30):
             try:
-                p = _detect_profile(b)
+                p = _detect_profile(b, pinned)
                 break
             except RuntimeError:
                 time.sleep(1.0)
@@ -486,10 +509,25 @@ def hummod_stop_state(engine: str = "default") -> str:
     return json.dumps({"stop_enabled": bool(b.menu_item_enabled(stop_id))})
 
 
+def _csv_list(s: str | None) -> list[str]:
+    """Split a comma-separated string into a list of non-empty items."""
+    if not s:
+        return []
+    return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def _bool_str(s: str | None) -> bool | None:
+    """Parse a boolean given as a string ('1'/'true'/'yes'/'on' vs '0'/'false'/'no'/'off')."""
+    if s is None or s == "":
+        return None
+    return s.strip().lower() in ("1", "true", "yes", "on")
+
+
 @server.tool()
 @safe
 def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
-              wait: bool = True, engine: str = "default") -> str:
+              wait: bool = True, engine: str = "default",
+              times_str: str = "", verify_str: str = "") -> str:
     """Run the simulation for a Go-menu duration ('1 Min', '10 Min', 'To Next Hour', '1 Day', '30 Days', ...). Waits for completion and returns wall seconds.
 
     times repeats the same Go step (the Go menu has no '30 Sec' entry, so 30 s = times=3 of '10 Sec').
@@ -505,7 +543,13 @@ def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
 
     Completion is detected from the engine's UI thread (the model solves on it) plus
     the Stop menu item - on HumMod 3.0.4 the Stop item stays gray even while the
-    model is running, so it alone cannot tell 'finished' from 'still running'."""
+    model is running, so it alone cannot tell 'finished' from 'still running'.
+
+    times_str / verify_str are string-typed escape hatches for MCP clients that
+    cannot express a JSON number or boolean (some clients quote every scalar):
+    times_str='3' means times=3, verify_str='true' means verify=True. They take
+    precedence over the typed arguments when given.
+    """
     b, p = get_bridge(engine)
     label = duration_label.strip()
     if label.lower().startswith("go/"):
@@ -513,6 +557,16 @@ def hummod_go(duration_label: str, times: int = 1, verify: bool = False,
     node = b.menu_tree().walk("Go/" + label)
     if node.cmd_id is None:
         raise RuntimeError(f"'{label}' is not a runnable Go entry")
+    if times_str:
+        try:
+            times = int(str(times_str).strip())
+        except ValueError:
+            raise RuntimeError(f"times_str={times_str!r} is not an integer")
+    if verify_str:
+        v = _bool_str(verify_str)
+        if v is None:
+            raise RuntimeError(f"verify_str={verify_str!r} is not a boolean")
+        verify = v
     times = max(1, int(times))
     t_before = _sim_time(b, p) if verify else None
     t0 = time.time()
@@ -830,14 +884,19 @@ def hummod_drag(x1: int, y1: int, x2: int, y2: int, engine: str = "default",
 @safe
 def hummod_radio(panel_path: str, ordinal: int | None = None, expected: int | None = None,
                  value: str | None = None, probe_vars: list[str] | None = None,
-                 engine: str = "default") -> str:
+                 engine: str = "default", probe_vars_csv: str = "") -> str:
     """Click a radio button on a panel page. Prefer value='On'/'Off' (label semantics from the profile); or ordinal among radios sorted by control id (expected = total count guardrail).
 
     probe_vars optionally names model variables to read back after the click, so
     the effect can be verified at model level (e.g. ['RespiratoryCenter-Integration.TotalDrive'])
     - the only reliable confirmation when the widget's own check state is not exposed.
+
+    probe_vars_csv is the string-typed equivalent ('A,B,C') for MCP clients that
+    cannot express a JSON array; it takes precedence when given.
     """
     b, p = get_bridge(engine)
+    if probe_vars_csv:
+        probe_vars = _csv_list(probe_vars_csv)
     _navigate(panel_path, engine)
     radios = sorted([c for c in b.controls() if c.is_radio], key=lambda c: c.ctrl_id)
     if expected is not None and len(radios) != expected:
@@ -1094,14 +1153,21 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
 
 @server.tool()
 @safe
-def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default") -> str:
+def hummod_snapshot(name: str, vars: list[str] | None = None, engine: str = "default",
+                    vars_csv: str = "") -> str:
     """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables.
 
     The simulation clock (System.X on HumMod, X on QCP) is always included in
     'values', so every snapshot tells you which model time it was taken at.
     Requested names that do not exist in the model are listed under 'missing'
-    instead of being silently dropped."""
+    instead of being silently dropped.
+
+    vars_csv is the string-typed equivalent ('A,B,C') for MCP clients that cannot
+    express a JSON array; it takes precedence when given. Omitting both exports
+    the full solution and returns only the clock."""
     b, p = get_bridge(engine)
+    if vars_csv:
+        vars = _csv_list(vars_csv)
     path = _export_snapshot(b, p, name)
     want = {v.lower() for v in (vars or [])}
     clock = "system.x" if p.file.get("save_sol") is not None else "x"
@@ -1156,12 +1222,17 @@ def hummod_load_ics(path: str, engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_get_vars(sol_path: str, names: list[str]) -> str:
+def hummod_get_vars(sol_path: str, names: list[str], names_csv: str = "") -> str:
     """Read current (last sample) variable values from an exported file.
 
     HumMod exports .SOL (XML) and QCP exports .ICS (text key-value); the
     format is detected from the file head, so both work here.
-    Returns {values, missing}."""
+    Returns {values, missing}.
+
+    names_csv is the string-typed equivalent ('A,B,C') for MCP clients that
+    cannot express a JSON array; it takes precedence when given."""
+    if names_csv:
+        names = _csv_list(names_csv)
     want = {n.lower() for n in names}
     vals = parse_export(sol_path, want)
     have = {k.lower() for k in vals}
@@ -1170,8 +1241,14 @@ def hummod_get_vars(sol_path: str, names: list[str]) -> str:
 
 @server.tool()
 @safe
-def hummod_history(sol_path: str, vars: list[str], max_points: int = 500) -> str:
-    """Time series from a .SOL export: simulation-time axis (System.X) plus one series per requested variable (e.g. 'BloodVol.Vol'), downsampled to max_points (latest sample always included). Plot-ready."""
+def hummod_history(sol_path: str, vars: list[str], max_points: int = 500,
+                   vars_csv: str = "") -> str:
+    """Time series from a .SOL export: simulation-time axis (System.X) plus one series per requested variable (e.g. 'BloodVol.Vol'), downsampled to max_points (latest sample always included). Plot-ready.
+
+    vars_csv is the string-typed equivalent ('A,B,C') for MCP clients that cannot
+    express a JSON array; it takes precedence when given."""
+    if vars_csv:
+        vars = _csv_list(vars_csv)
     try:
         hist = parse_sol_history(sol_path, set(vars), max_points=max_points)
         return json.dumps({"ok": True, **hist})

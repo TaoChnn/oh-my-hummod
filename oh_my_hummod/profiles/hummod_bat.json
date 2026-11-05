@@ -35,18 +35,31 @@
     "treadmill_exhaustion": "UNLIKE daily-planner aerobics (no wrapup), treadmill bouts DO auto-stop: Exercise-Control Wrapup fires when SkeletalMuscle-Ph.Ph <= Motivation parm (default 0.04 slider = min muscle pH 6.65) and resets Request->0/Status.Exertion->0 mid-Go (clock keeps advancing). At 10000 ft, 6 MPH flat already exhausts the subject within one 5-min stage (muscle pH 6.76 after stage 1). Repeated bouts stack the acid load: after 4 consecutive bouts (0/0/2/4%) the 6% bout drove muscle pH 6.39 -> skeletal+respiratory muscle failure -> circulatory collapse -> death (IsDead=1, GCS 3, CO 0, MAP 7.5, HR 202 agonal) ~10 min after the last bout, same cascade as the R1 aerobics death. Record bout duration until auto-stop as the tolerance metric and do NOT chain bouts without recovery.",
     "posture_page": "Lifestyle/Posture/Posture (NOT Posture/Control - that resolves to a Diet page) has 8 radios: ordinals 0-4 = Restraint (None/Lying/Sitting/Standing/Tilting), ordinals 5-7 = PostureControl.Request (Lying/Sitting/Standing). Radios carry no check state; probe Status.Posture (1=lying,2=sitting,3=standing)/Status.Standing.",
     "menu_paths": "Panel paths that differ from the menu tree labels: Lifestyle/Posture/Posture (posture controls), Lifestyle/Exercise/Treadmill + /Control (submenu leaves), Lifestyle/Environment hosts Altitude+Barometer+Temperature+Humidity+Wind+Clothes on ONE page (no Altitude subpage).",
-    "status_bar_progress": "While solving, the status bar shows 'Solving ...' then '... Done'; on this build the Stop menu item becomes ENABLED during the run. hummod_busy may report busy=false mid-run because the UI thread stays responsive - trust the status text."
+    "status_bar_progress": "While solving, the status bar shows 'Solving ...' then '... Done'; on this build the Stop menu item becomes ENABLED during the run. hummod_busy may report busy=false mid-run because the UI thread stays responsive - trust the status text.",
+    "asphyxia_clamp": "Protocol 4.3.15 on BAT: Respiration/Respiratory Center/Integration (menu id 120) has 2 radios (ctrl 24078 = ordinal 0 = Switch Off, ctrl 24080 = ordinal 1 = Switch On) and 1 Level slider (ctrl 24082, factory value 0.0 - do NOT touch the slider). Verified by probe 2026-11-05: pressing ordinal 1 sets RespiratoryCenter-Integration.TotalDrive 0.958 -> 0.0 and RespiratoryCenter-Output.Rate -> 0 while RespiratoryCenter-Chemical.TotalDrive keeps rising (0.96 -> 10.3 by 8 min) - the clamp cuts the integration->motor output stage, not the chemoreceptors. So the protocol needs no slider at all.",
+    "asphyxia_bat_results": "BAT vs Clemmer Salt 3.0.4 on 4.3.15 (same protocol, 2026-11-05). Baseline differs: BAT brain flow 638 mL/min vs 812 (Brain-Flow Conductance(/G) 0.0049 vs 0.00597); BAT resting HR 72.7 vs 72.9. Asphyxia course: PaCO2 plateau 60.19 mmHg (3.0.4: 58.2) - the 58 cap is NOT a family constant; pH nadir 7.236 (3.0.4: 7.252); lactate flat to 5 min (1.022 vs 1.0221) then rises only in the agonal phase (1.186 at 9 min, 3.0.4: 1.067); GCS first drop 3.5 min (3.0.4: 2.5); brain function 0 at 6.33 min (3.0.4: 5.7) because Brain-Metabolism NormalCalsUsed is 0.12 vs 0.1647 Cal/Min/G (-27 % demand); cardiac arrest 8.17 min via Heart-VFib (LeftHeart-Function.Effect < 0.30) then asystole at 8.67 min; HR freezes at 202 (3.0.4: 195) - the HR-freeze defect IS reproduced; post-arrest pH runs away to 13.9 at 11 min (3.0.4: 10.37) - the Henderson-Hasselbalch artifact IS reproduced (BloodPhValues.DES is byte-identical between the two builds).",
+    "asphyxia_defect_verdict": "Of the four 3.0.4 defects: (1) PCO2 cap ~58 - NOT reproduced (BAT plateaus at 60.19); (2) lactate never rises - only PARTIALLY reproduced (identical flat lactate up to 5 min, then a small late rise to +18 %); (3) post-arrest pH > 10 algebraic artifact - REPRODUCED and worse (13.9); (4) HR frozen after arrest - REPRODUCED (202 /min). Defects 3 and 4 are family-level (identical model code); 1 and 2 are version-specific.",
+    "bat_extra_levers": "BAT's model has two extra clamps that 3.0.4 lacks: RespiratoryCenter-Chemical CentralClamp/CentralSetting (CentralClamp=1 sets CentralDrive to CentralSetting, default 0.6) and GlucosePool FixedMass?/FixedMass/FixedConc?/FixedConc. The central clamp is a second, more physiological way to build an asphyxia (fix the central chemoreceptor drive instead of the integration output) - worth using for a follow-up protocol.",
+    "bat_model_vs_304": "HumMod-BAT (2018) and Clemmer Salt 3.0.4 (2017) ship the BYTE-IDENTICAL HumMod.EXE (md5 50ef7168cb7c00b72091a2096e39ed55, 2043904 bytes) and the same Display/Version.DES (Model HumMod V1.6.0, Solver HumMod V1.2.1). All differences are in the model XML: 110 files differ under Structure/ (plus ~20 files only in 3.0.4, e.g. Acetoacetate, LiverMetabolism_TG, GlomerulusBicarbonate). Relevant to 4.3.15: SANode-Rate (BasicRateTarget 82 vs 77, SympatheticEffect curve reaches 120 bpm at effect 5.0 vs 3.5), Brain-Metabolism (0.12 vs 0.1647 Cal/Min/G), Brain-Flow (Conductance 0.0049 vs 0.00597, PO2OnTension/PCO2OnTension shifted 2 mmHg lower), SystemicArtys (fixed Compliance 1.55/Conductance 60 vs adaptive Compliance variable), RespiratoryCenter-Chemical (CentralClamp added). Identical: PO2Artys, CO2Artys, BloodPhValues, LacPool, CardiacArrest, Heart-VFib, RespiratoryCenter-Integration (Clamp/Level), SkeletalMuscle-*, Lactate.DES.",
+    "bat_mcp_profile_pinning": "BAT has no VERSION file and shares its EXE with 3.0.4, so menu-based detection CANNOT tell them apart and always returned the hummod_3.0.4 profile (wrong). engines.json now pins it: \"bat\": {\"dir\": ..., \"profile\": \"hummod_bat\"}. The server accepts either a plain dir string or the {dir, profile} object form."
   },
   "page_ids": {
     "Trauma/Hemorrhage": 741,
     "Diagnosis/Chart": 635,
     "Lifestyle/Daily Planner/Schedule": 624,
-    "Lifestyle/Daily Planner/Control": 623
+    "Lifestyle/Daily Planner/Control": 623,
+    "Respiration/Respiratory Center/Integration": 120,
+    "Diagnosis/Evaluation": 635
   },
   "radio_semantics": {
     "Trauma/Hemorrhage": {
       "off": 0,
       "on": 1
+    },
+    "Respiration/Respiratory Center/Integration": {
+      "off": 0,
+      "on": 1,
+      "note": "Common.Switch pair for the Clamp switch: ordinal 0 = Switch Off, ordinal 1 = Switch On. Level slider (ordinal 0, ctrl 24082) factory value 0.0."
     },
     "Lifestyle/Daily Planner/Schedule": {
       "row_stride": 5,
