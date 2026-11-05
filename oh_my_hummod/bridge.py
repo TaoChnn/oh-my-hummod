@@ -434,28 +434,34 @@ class Bridge:
     def set_slider(self, ctrl_hwnd: int, parent_hwnd: int, pos: int, commit_endscroll: bool = True) -> None:
         """Move a ScrollBar thumb; commit behaviour is engine-dependent (see profile).
 
-        QCP 2005 ignores SB_THUMBPOSITION with position 0 (the value never
-        commits to the minimum), so pos 0 is set by repeated SB_LINELEFT
-        line-scrolls instead - each of those commits immediately, and
-        SB_LINELEFT at 0 is a no-op. The control's reported thumb position can
-        be unsynced (0) before QCP has painted the page, so never trust it to
-        mean "already at 0": always overshoot with a fixed message budget.
+        Every engine honours SB_THUMBPOSITION, so the position is always
+        posted first; the differences are in how position 0 and the commit
+        message behave:
 
-        HumMod 1.6.1 is the other way round: its scrollbars only implement
-        SB_THUMBPOSITION/SB_THUMBTRACK and ignore SB_LINELEFT entirely, so the
-        line-scroll fallback never moves them to 0 (observed on the Air Supply
-        gas-tank valves). Post the position first - every engine honours that -
-        and keep the line-scrolls afterwards purely as the QCP fallback (they
-        are no-ops once the thumb already sits at 0).
+        * HumMod 3.0.4 maplist sliders commit every list index via
+          SB_THUMBPOSITION, but ignore SB_LINELEFT entirely (seen 2026-11-05
+          on Trauma/Pericardium/Pericardial Hemorrhage: 60 line-scrolls with
+          the thumb at index 1 never moved the model value, while
+          THUMBPOSITION committed indices 1-4). Position 0 therefore has to
+          go out as SB_THUMBPOSITION too - otherwise the bleed can never be
+          stopped.
+        * HumMod 1.6.1 is the same way round: only SB_THUMBPOSITION /
+          SB_THUMBTRACK do anything (observed on the Air Supply gas-tank
+          valves), so the line-scroll fallback never moves it to 0.
+        * QCP 2005 is the mirror image: it ignores SB_THUMBPOSITION with
+          position 0, so pos 0 is set by repeated SB_LINELEFT line-scrolls -
+          each of those commits immediately, and SB_LINELEFT at 0 is a no-op.
+          The control's reported thumb position can be unsynced (0) before
+          QCP has painted the page, so never trust it to mean "already at
+          0": always overshoot with a fixed message budget.
+
+        So the sequence is: SB_THUMBPOSITION(pos) (+ ENDSCROLL), then - only
+        for pos == 0 - the SB_LINELEFT burst as the QCP fallback. On HumMod
+        that burst is a no-op (the value already sits at 0 and line-scrolls
+        are ignored); on QCP the THUMBPOSITION-0 was ignored and the burst
+        does the work. Any ENDSCROLL mis-commit on QCP with an unsynced thumb
+        converges to 0 too, which is exactly the pos==0 request.
         """
-        if pos == 0:
-            user32.PostMessageW(parent_hwnd, WM_HSCROLL,
-                                (0 << 16) | SB_THUMBPOSITION, ctrl_hwnd)
-            time.sleep(0.06)
-            for _ in range(60):
-                user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_LINELEFT, ctrl_hwnd)
-                time.sleep(0.04)
-            return
         user32.PostMessageW(parent_hwnd, WM_HSCROLL,
                             (pos << 16) | SB_THUMBPOSITION, ctrl_hwnd)
         time.sleep(0.06)
@@ -463,6 +469,10 @@ class Bridge:
             user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_ENDSCROLL, 0)
             user32.PostMessageW(ctrl_hwnd, WM_HSCROLL, SB_ENDSCROLL, 0)
         time.sleep(0.1)
+        if pos == 0:
+            for _ in range(60):
+                user32.PostMessageW(parent_hwnd, WM_HSCROLL, SB_LINELEFT, ctrl_hwnd)
+                time.sleep(0.04)
 
     # ---------- run / completion ----------
 
