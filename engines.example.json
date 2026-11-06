@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Engine registry for oh-my-hummod. Copy this file to 'engines.json' and",
+    "fill in the folders where YOUR engine builds live. 'engines.json' is",
+    "git-ignored, so your local paths stay local.",
+    "",
+    "Two forms are accepted:",
+    "  \"key\": \"C:/path/to/engine\"                      - profile auto-detected",
+    "  \"key\": {\"dir\": \"C:/path\", \"profile\": \"name\"} - profile pinned",
+    "",
+    "Pin the profile when menu-based detection cannot tell two builds apart.",
+    "HumMod-BAT and Clemmer Salt 3.0.4 ship the SAME HumMod.EXE, so 'bat'",
+    "must be pinned to 'hummod_bat'.",
+    "",
+    "The 'default' key is taken from the HUMMOD_ENGINE_DIR environment",
+    "variable and does not belong here.",
+    "",
+    "Engine folders are discovered by the EXE inside them:",
+    "  HumMod.EXE        -> 3.0.4 / 1.6.1 / HumMod-BAT / avphummod",
+    "  QCP 2005.EXE      -> QCP"
+  ],
+  "3.0.4": {
+    "dir": "C:/path/to/HumMod-ClemmerSalt-3.0.4",
+    "profile": "hummod_3.0.4"
+  },
+  "1.6.1": {
+    "dir": "C:/path/to/HumMod-standalone-1.6.1",
+    "profile": "hummod_1.6.1"
+  },
+  "qcp": {
+    "dir": "C:/path/to/QCP-2005",
+    "profile": "qcp_2005"
+  },
+  "bat": {
+    "dir": "C:/path/to/HumMod-BAT",
+    "profile": "hummod_bat"
+  },
+  "avp": {
+    "dir": "C:/path/to/avphummod",
+    "profile": "avphummod"
+  }
+}

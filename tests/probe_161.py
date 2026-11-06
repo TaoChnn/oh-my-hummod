@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from oh_my_hummod.bridge import Bridge, user32
 from ctypes import wintypes
 
-ENGINE = r"C:/path/to/HumMod-standalone-1.6.1"
+ENGINE = os.environ.get("HUMMOD_ENGINE_DIR") or sys.argv[1]
 b = Bridge(ENGINE)
 print("attach:", b.attach(), "pid:", b.pid)
 if not b.pid:

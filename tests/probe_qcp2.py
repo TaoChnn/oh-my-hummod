@@ -6,7 +6,7 @@ import time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from oh_my_hummod.bridge import Bridge
 
-ENGINE = r"C:/path/to/QCP-2005"
+ENGINE = os.environ.get("HUMMOD_ENGINE_DIR") or sys.argv[1]
 b = Bridge(ENGINE, exe_name="QCP 2005.EXE")
 print("attach:", b.attach(), "pid:", b.pid)
 b.wait_ready("Help", timeout=15)

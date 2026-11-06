@@ -8,13 +8,13 @@ from mcp.client.stdio import stdio_client
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.join(HERE, "..", "oh_my_hummod", "server.py")
-OUT = r"qcp-canvas-out"
+OUT = os.environ.get("HUMMOD_OUTDIR", "qcp-canvas-out")
 os.makedirs(OUT, exist_ok=True)
 
 
 async def main():
     env = dict(os.environ)
-    env["HUMMOD_ENGINE_DIR"] = r"C:/path/to/QCP-2005"
+    env["HUMMOD_ENGINE_DIR"] = os.environ.get("HUMMOD_ENGINE_DIR", "")
     env["HUMMOD_PROFILE"] = "qcp_2005"
     env["HUMMOD_OUTDIR"] = OUT
     params = StdioServerParameters(command=sys.executable, args=[SERVER], env=env)

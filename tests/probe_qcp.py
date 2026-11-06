@@ -10,7 +10,7 @@ from ctypes import wintypes
 from oh_my_hummod.bridge import user32, kernel32
 
 ENGINE_DIR = sys.argv[1] if len(sys.argv) > 1 else \
-    r"C:/path/to/QCP-2005"
+    (os.environ.get("HUMMOD_ENGINE_DIR") or sys.argv[1])
 EXE = sys.argv[2] if len(sys.argv) > 2 else "QCP 2005.EXE"
 
 target = os.path.join(ENGINE_DIR, EXE)

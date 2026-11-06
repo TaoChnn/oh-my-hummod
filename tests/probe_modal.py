@@ -10,7 +10,7 @@ from ctypes import wintypes
 from oh_my_hummod.bridge import Bridge, user32
 from oh_my_hummod.profile import Profile
 
-ENGINE = r"C:/path/to/HumMod-standalone-1.6.1"
+ENGINE = os.environ.get("HUMMOD_ENGINE_DIR") or sys.argv[1]
 p = Profile.load("hummod_1.6.1")
 b = Bridge(ENGINE)
 if not b.attach():

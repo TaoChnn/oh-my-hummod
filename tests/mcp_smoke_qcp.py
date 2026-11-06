@@ -15,9 +15,9 @@ async def main():
     env = dict(os.environ)
     # Engine dir is overridable so regression runs can drive a private COPY of
     # the engine folder (HUMMOD_ENGINE_DIR=...) instead of a live shared engine.
-    env.setdefault("HUMMOD_ENGINE_DIR", r"C:/path/to/QCP-2005")
+    env.setdefault("HUMMOD_ENGINE_DIR", os.environ.get("HUMMOD_ENGINE_DIR", ""))
     env.setdefault("HUMMOD_PROFILE", "qcp_2005")
-    env.setdefault("HUMMOD_OUTDIR", r"qcp-out")
+    env.setdefault("HUMMOD_OUTDIR", os.environ.get("HUMMOD_OUTDIR", "qcp-out"))
     params = StdioServerParameters(command=sys.executable, args=[SERVER], env=env)
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as s:

@@ -6,3 +6,7 @@ dist/
 *.SOL
 mcp-exports/
 .agents/
+
+# Local engine registry - it holds absolute paths to this machine's engine
+# folders. Copy engines.example.json to engines.json and fill it in locally.
+engines.json
