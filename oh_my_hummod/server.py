@@ -27,11 +27,13 @@ from mcp.server.mcpserver import MCPServer
 
 try:
     from .bridge import Bridge, MenuItem, user32
+    from .guide import INSTRUCTIONS, RESOURCES
     from .profile import Profile
     from .solver import parse_export, parse_sol, parse_sol_history
 except ImportError:  # run as a plain script: python oh_my_hummod/server.py
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from oh_my_hummod.bridge import Bridge, MenuItem, user32
+    from oh_my_hummod.guide import INSTRUCTIONS, RESOURCES
     from oh_my_hummod.profile import Profile
     from oh_my_hummod.solver import parse_export, parse_sol, parse_sol_history
 
@@ -39,7 +41,32 @@ ENGINE_DIR = os.environ.get("HUMMOD_ENGINE_DIR", os.path.join(os.getcwd(), "engi
 PROFILE_NAME = os.environ.get("HUMMOD_PROFILE", "")
 OUTDIR = os.environ.get("HUMMOD_OUTDIR", os.path.join(os.getcwd(), "mcp-exports"))
 
-server = MCPServer("hummod")
+# instructions: returned in the MCP handshake (InitializeResult.instructions).
+# A client MAY fold it into the system prompt - the wording stays compact and
+# points at the resources for the long version.
+server = MCPServer("hummod", instructions=INSTRUCTIONS)
+
+
+# The long-form manual, published as MCP resources. Every client must support
+# resources/read, so this is the portable channel - unlike `instructions`,
+# which a client is free to ignore.
+def _register_resources() -> None:
+    def _reader(text: str):
+        """Build a zero-argument resource handler (the SDK checks that the
+        handler's parameters match the URI template, so the text has to be
+        captured, not passed in)."""
+        async def _read() -> str:
+            return text
+        return _read
+
+    for uri, (desc, text) in RESOURCES.items():
+        handler = _reader(text)
+        handler.__name__ = "read_" + uri.rsplit("/", 1)[-1].replace("-", "_")
+        server.resource(uri, name=desc, description=desc,
+                        mime_type="text/markdown")(handler)
+
+
+_register_resources()
 
 
 def _load_engines() -> dict[str, dict]:

@@ -203,7 +203,8 @@ differences, drop a JSON in `profiles/`. No code changes.
 | Running | `hummod_go` (duration, `times=`, `verify=`, `wait=`) `hummod_busy` `hummod_stop_state` |
 | Controls | `hummod_radio` `hummod_edit` `hummod_slider` `hummod_action` (`!` triggers) `hummod_button` (captioned buttons) `hummod_click` `hummod_drag` (coordinates) |
 | Dialogs | `hummod_dialogs` `hummod_dialog_button` `hummod_modals` `hummod_dismiss_modal` `hummod_popup` `hummod_listbox` |
-| Data | `hummod_snapshot` `hummod_get_vars` `hummod_history` (time series) `hummod_shot` (screenshot of the engine window) |
+| Data | `hummod_snapshot` `hummod_get_vars` `hummod_history` (time series) `hummod_shot` (screenshot of the engine window) `hummod_save_ics` / `hummod_load_ics` (initial-condition files) |
+| Parameters | `hummod_set_param` (set a model parameter by its physical value) |
 
 Every tool takes an optional `engine=` key, so one server can drive several
 engine builds at once (see `engines.json`); `hummod_engines` lists them with
@@ -226,6 +227,57 @@ Notes that came out of multi-engine field trials:
 
 Errors return one-line JSON; unknown menu paths list the available siblings so
 agents can self-correct.
+
+## Manual for AI agents
+
+The server ships its own manual, so an agent does not have to learn the tool
+surface by trial and error:
+
+| Channel | What it is | How it reaches the model |
+|---|---|---|
+| `instructions` | a compact workflow (discover → navigate → set → verify → run → collect) | returned in the MCP handshake; clients may fold it into the system prompt |
+| `hummod://guide` | tool-by-tool usage | `resources/read` |
+| `hummod://workflow` | a worked protocol (baseline → arm → verify → reset → repeat) | `resources/read` |
+| `hummod://quirks` | engine differences and the traps that cost the most time | `resources/read` |
+| `hummod://variables` | variable naming across builds | `resources/read` |
+
+Resources are the portable channel: every MCP client must support
+`resources/read`, whereas `instructions` is optional for clients.
+
+### Calling convention
+
+Drive the engine **one tool call at a time and read each result before
+deciding the next step**. That is what separates a working run from a
+plausible-looking wrong one — a slider position that looks right on screen
+may not have reached the model, and a radio whose state cannot be read back
+may still be selected.
+
+A script is fine for repeating a protocol you have already verified step by
+step, but do not pre-write a batch of steps you have not probed, and do not
+bypass this server to drive the engine directly.
+
+### The traps worth knowing before your first run
+
+- **Same EXE, different engine.** HumMod-BAT and Clemmer Salt 3.0.4 ship a
+  byte-identical `HumMod.EXE`; all their differences are in the model XML.
+  Menu-based detection cannot tell them apart — the profile has to be pinned
+  per engine key (`engines.json` accepts `{"dir": ..., "profile": ...}`).
+- **"Finished" is engine-specific.** On HumMod the Stop menu is *enabled*
+  while solving, so it is not a completion signal; the status bar is. On
+  QCP it is the two-phase Stop behaviour. `hummod_go` already decides this
+  correctly — do not second-guess it from the menu.
+- **Verify every setting at model level.** Switch state often lives in the
+  model rather than in the Win32 control, so the control cannot be read
+  back. Pass `probe_vars=[...]` to `hummod_radio` / `hummod_slider` and read
+  the model instead.
+- **Sliders differ per build and per control.** Some commit linearly, some
+  ignore position 0, some never commit at all. Set, then read back.
+- **QCP must be started visible** (`hummod_start(key="qcp", hidden=False)`);
+  a hidden start exits within seconds.
+- **QCP exports state only** (`.ICS`, ~1367 variables): no time series, no
+  derived values. Snapshot point by point.
+
+`hummod://quirks` has the full list, measured rather than quoted.
 
 ## Validated profiles
 
@@ -254,6 +306,7 @@ python tests\mcp_smoke.py    # MCP-protocol level: tools over stdio
 python tests\multi_engine_test.py   # one session across every registered engine
 python tests\improvements_test.py   # inspect modes, modal handling, aliases, radio probe
 python tests\test_solver.py  # parser unit tests (fixtures included, no engine needed)
+python tests\guide_test.py   # the manual is reachable: instructions + resources
 ```
 
 ## Licensing
