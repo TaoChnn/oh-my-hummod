@@ -42,13 +42,16 @@ ask me before guessing any of the following local details:
 Then:
 1. Create a venv, `pip install -e .` in the repo.
 2. Set HUMMOD_ENGINE_DIR and HUMMOD_OUTDIR.
-3. Run `python tests\engine_smoke.py --engine <engine dir> --profile <profile>`
+3. Copy `engines.example.json` to `engines.json` and fill in the folders
+   where the engine builds live on THIS machine (`engines.json` is
+   git-ignored - it holds local paths and must not be committed).
+4. Run `python tests\engine_smoke.py --engine <engine dir> --profile <profile>`
    and confirm it prints ENGINE_SMOKE_OK. If it fails, show me the exact
    command, error output and detected profile before continuing.
-4. Register the MCP server with my client using the venv's absolute
+5. Register the MCP server with my client using the venv's absolute
    python.exe and the env vars above.
-5. Restart the client and verify the hummod tools are listed.
-6. Run a read-only check: `hummod_status` and `hummod_engines`.
+6. Restart the client and verify the hummod tools are listed.
+7. Run a read-only check: `hummod_status` and `hummod_engines`.
 
 Rules:
 - Do not modify engine binaries or model files.
@@ -208,8 +211,9 @@ differences, drop a JSON in `profiles/`. No code changes.
 | Reporting | `hummod_integrity_statement` (the academic-integrity statement a report must end with) `hummod_verify_integrity` (check a report still carries it) |
 
 Every tool takes an optional `engine=` key, so one server can drive several
-engine builds at once (see `engines.json`); `hummod_engines` lists them with
-running state and detected profile.
+engine builds at once (see `engines.json` - copy `engines.example.json` to
+create it; it is git-ignored because it holds your local paths);
+`hummod_engines` lists them with running state and detected profile.
 
 Notes that came out of multi-engine field trials:
 - `hummod_inspect` takes `mode="menu"|"controls"|"both"` and an optional
@@ -302,7 +306,8 @@ bypass this server to drive the engine directly.
 - **Same EXE, different engine.** HumMod-BAT and Clemmer Salt 3.0.4 ship a
   byte-identical `HumMod.EXE`; all their differences are in the model XML.
   Menu-based detection cannot tell them apart — the profile has to be pinned
-  per engine key (`engines.json` accepts `{"dir": ..., "profile": ...}`).
+  per engine key (`engines.json` accepts `{"dir": ..., "profile": ...}`; use
+  `engines.example.json` as the starting point).
 - **"Finished" is engine-specific.** On HumMod the Stop menu is *enabled*
   while solving, so it is not a completion signal; the status bar is. On
   QCP it is the two-phase Stop behaviour. `hummod_go` already decides this
