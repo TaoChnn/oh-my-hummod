@@ -342,19 +342,36 @@ unknown build, run `python tests/discover.py --engine C:\path\to\build`.
 
 ## Tests
 
-With an engine running:
+The one to run first — it drives a live engine through a whole profile:
 
-```
+```bat
 set HUMMOD_ENGINE_DIR=C:\path\to\engine
 python tests\engine_smoke.py --engine C:\path\to\engine --profile hummod_3.0.4
-                             # full: attach, binding, menus, radio (SOL-verified), run
-python tests\mcp_smoke.py    # MCP-protocol level: tools over stdio
-python tests\multi_engine_test.py   # one session across every registered engine
-python tests\improvements_test.py   # inspect modes, modal handling, aliases, radio probe
-python tests\test_solver.py  # parser unit tests (fixtures included, no engine needed)
-python tests\guide_test.py   # the manual is reachable: instructions + resources
-python tests\integrity_test.py  # the integrity statement tool behaves as specified
+                             # attach, binding, menus, radio (SOL-verified), a run
+                             # -> ENGINE_SMOKE_OK
 ```
+
+Without an engine:
+
+```bat
+python tests\test_solver.py                   # parser unit tests (fixtures included)
+python tests\regression\guide_test.py         # the manual is reachable
+python tests\regression\integrity_test.py     # the integrity-statement tool
+```
+
+With an engine (point these at a **copy**, not at an engine another session
+is using):
+
+```bat
+python tests\mcp_smoke.py                    # MCP-protocol level: tools over stdio
+python tests\mcp_smoke_qcp.py                # the same for QCP
+python tests\multi_engine_test.py            # one session across every engine
+```
+
+`tests/regression/` holds one file per bug that a field trial actually hit,
+so a fix cannot silently regress. `tests/probes/` holds the
+development-time investigation scripts — useful when an unfamiliar engine
+build misbehaves, not needed otherwise. `tests/README.md` explains both.
 
 ## Licensing
 
