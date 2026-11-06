@@ -205,6 +205,7 @@ differences, drop a JSON in `profiles/`. No code changes.
 | Dialogs | `hummod_dialogs` `hummod_dialog_button` `hummod_modals` `hummod_dismiss_modal` `hummod_popup` `hummod_listbox` |
 | Data | `hummod_snapshot` `hummod_get_vars` `hummod_history` (time series) `hummod_shot` (screenshot of the engine window) `hummod_save_ics` / `hummod_load_ics` (initial-condition files) |
 | Parameters | `hummod_set_param` (set a model parameter by its physical value) |
+| Reporting | `hummod_integrity_statement` (the academic-integrity statement a report must end with) |
 
 Every tool takes an optional `engine=` key, so one server can drive several
 engine builds at once (see `engines.json`); `hummod_engines` lists them with
@@ -240,9 +241,37 @@ surface by trial and error:
 | `hummod://workflow` | a worked protocol (baseline → arm → verify → reset → repeat) | `resources/read` |
 | `hummod://quirks` | engine differences and the traps that cost the most time | `resources/read` |
 | `hummod://variables` | variable naming across builds | `resources/read` |
+| `hummod://integrity` | reporting rules and the academic-integrity statement | `resources/read` |
 
 Resources are the portable channel: every MCP client must support
 `resources/read`, whereas `instructions` is optional for clients.
+
+### Reports must end with an integrity statement
+
+Any report or experiment write-up produced with this tool **must end with an
+academic-integrity statement**. Call `hummod_integrity_statement` with what
+the AI did and what the human did, then append the returned `statement`
+verbatim as the last section, with every placeholder filled in:
+
+```text
+hummod_integrity_statement(
+    ai_contributions=[...],      # what the AI actually did
+    human_contributions=[...],   # what the human actually did
+    author="...", date="...")
+```
+
+The statement separates *execution* from *authorship*: the tool automates
+the mechanical parts (setting the same parameter on four arms, running the
+same protocol five times, parsing thousands of variables, plotting them),
+while experimental design, parameter choice, judging whether the numbers
+make sense, and the interpretation stay with the human. It also states
+plainly that using this tool to have AI do an entire assignment is **not
+endorsed** - engine output contains model defects, not just physiology, and
+telling those apart from real findings needs domain knowledge the tool does
+not have.
+
+`hummod://integrity` has the full wording, plus a note on what to do if
+your course mandates its own AI disclosure form.
 
 ### Calling convention
 
@@ -307,6 +336,7 @@ python tests\multi_engine_test.py   # one session across every registered engine
 python tests\improvements_test.py   # inspect modes, modal handling, aliases, radio probe
 python tests\test_solver.py  # parser unit tests (fixtures included, no engine needed)
 python tests\guide_test.py   # the manual is reachable: instructions + resources
+python tests\integrity_test.py  # the integrity statement tool behaves as specified
 ```
 
 ## Licensing
