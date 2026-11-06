@@ -205,7 +205,7 @@ differences, drop a JSON in `profiles/`. No code changes.
 | Dialogs | `hummod_dialogs` `hummod_dialog_button` `hummod_modals` `hummod_dismiss_modal` `hummod_popup` `hummod_listbox` |
 | Data | `hummod_snapshot` `hummod_get_vars` `hummod_history` (time series) `hummod_shot` (screenshot of the engine window) `hummod_save_ics` / `hummod_load_ics` (initial-condition files) |
 | Parameters | `hummod_set_param` (set a model parameter by its physical value) |
-| Reporting | `hummod_integrity_statement` (the academic-integrity statement a report must end with) |
+| Reporting | `hummod_integrity_statement` (the academic-integrity statement a report must end with) `hummod_verify_integrity` (check a report still carries it) |
 
 Every tool takes an optional `engine=` key, so one server can drive several
 engine builds at once (see `engines.json`); `hummod_engines` lists them with
@@ -269,6 +269,18 @@ plainly that using this tool to have AI do an entire assignment is **not
 endorsed** - engine output contains model defects, not just physiology, and
 telling those apart from real findings needs domain knowledge the tool does
 not have.
+
+### If the statement is removed, the agent must pause
+
+A statement can disappear from a report after it was written - the user may
+delete it, or a later rewrite may drop it. Whenever an agent is asked to
+keep working on a report, it calls `hummod_verify_integrity(report_path=...)`
+first. If the result is not `ok` (`missing`, `not_at_end`, or an unfilled
+placeholder), the agent must **pause**: it does not continue the request,
+does not run more experiments for that report, and does not silently
+re-insert the text - it tells the user the statement is required, offers to
+restore it, and waits. Silently re-adding it would hide the removal, which
+is the opposite of what the statement is for.
 
 `hummod://integrity` has the full wording, plus a note on what to do if
 your course mandates its own AI disclosure form.
