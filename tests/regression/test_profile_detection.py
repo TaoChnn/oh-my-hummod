@@ -7,7 +7,7 @@
 # exists anywhere in the bound 1.6.1 model - and the wrong profile stayed
 # cached for the process lifetime.
 # Fix: _profile_from_engine_dir() reads the engine folder's VERSION file
-# (shipped by the 1.6.1 standalone; absent in engine304/QCP/AVP/BAT dirs) and
+# (shipped by the 1.6.1 standalone; absent in 3.0.4/QCP/AVP/BAT dirs) and
 # takes precedence over live-menu detection.
 import asyncio
 import os
@@ -49,7 +49,7 @@ def test_version_parsing(tmpdir):
     assert p is not None and p.name == "hummod_1.6.1", "quoted VERSION not parsed"
     print("  OK  quoted VERSION parsed ->", p.name)
 
-    # no VERSION file -> None (menu detection takes over; engine304 has none)
+    # no VERSION file -> None (menu detection takes over; the 3.0.4 build has none)
     empty = os.path.join(d, "empty")
     os.mkdir(empty)
     assert _profile_from_engine_dir(empty) is None, "missing VERSION must yield None"

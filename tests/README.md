@@ -60,6 +60,7 @@ agent, fixed, and then had to be *proved* fixed.
 | `bat_profile_test.py` | per-engine profile pinning + string-typed parameters |
 | `fixes_test.py` | slider addressing by ctrl_id/label, model clock in snapshots, run-completion fallback |
 | `guide_test.py` | the manual is reachable: instructions in the handshake, resources readable |
+| `guide_schema_test.py` | the manual matches the real tool schemas (parameter names, tool names) |
 | `improvements_test.py` | inspect modes, modal handling, panel aliases, radio probing |
 | `integrity_test.py` | the integrity statement tool and the removal detection |
 | `mcp_ics_load_test.py` | loading a saved scenario into a running engine |

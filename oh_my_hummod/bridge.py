@@ -510,9 +510,10 @@ class Bridge:
         """True while the engine reports an unfinished run in its status bar.
 
         HumMod writes "Solving ..." while the model integrates and appends
-        "Done" when it finishes.  This is the only reliable signal on 3.0.4:
-        the Stop menu item can stay gray while the model runs, and the UI
-        thread keeps answering messages.
+        "Done" when it finishes.  This is the reliable signal on 3.x: the
+        Stop menu item is enabled while the model runs, so it is not a
+        completion signal by itself, and the UI thread keeps answering
+        messages.
         """
         t = self.status_text().strip().lower()
         if not t:
@@ -527,9 +528,10 @@ class Bridge:
                   dismiss: bool = True) -> dict:
         """Wait until the simulation has really finished.
 
-        HumMod 3.0.4 keeps the Stop menu item gray while the model is solving
-        and keeps answering window messages, so neither can detect "running".
-        The status bar is the reliable signal ("Solving ..." -> "Solving ... Done").
+        On HumMod 3.x the Stop menu item is ENABLED while the model solves and
+        the UI thread keeps answering window messages, so neither alone can
+        detect "running". The status bar is the reliable signal there
+        ("Solving ..." -> "Solving ... Done").
 
         `dismiss` closes event popups that the model raises mid-run (1.6.1
         pops "The ECG shows V-Fib! Continue?" and the symptom messages). Such a
@@ -624,8 +626,9 @@ class Bridge:
 
         HumMod solves the model on the UI thread, so while a run is in progress
         the window stops pumping messages.  A WM_NULL probe with a timeout is
-        the only reliable "is the engine still working?" signal - the Stop menu
-        item stays gray on 3.0.4 even while the model is solving.
+        one of the "is the engine still working?" signals - on 3.x the status
+        bar is the other (the Stop item is enabled while solving, so it is not
+        a completion signal).
         """
         res = ctypes.c_size_t()
         return user32.SendMessageTimeoutW(self.main, WM_NULL, 0, 0,

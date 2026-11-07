@@ -5,7 +5,8 @@ profile only records semantics and quirks:
   - exe_names           how to recognise the engine process
   - file                File-menu command ids for SOL/ICS dialogs (dialog automation
                         also needs the native dialog's Edit control ids)
-  - stop_cmd_id         completion semantics: grayed Stop = finished
+  - stop_cmd_id         Stop-menu command id (the completion-signal fallback
+                        for engines without a status-bar run signal, e.g. QCP)
   - quirks              engine behaviours that change tool behaviour
 Profiles are plain JSON so users can add a new engine without touching code.
 """

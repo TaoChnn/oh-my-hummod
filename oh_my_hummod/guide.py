@@ -6,9 +6,10 @@ Three layers, each with a different delivery mechanism:
                  (InitializeResult.instructions). Clients MAY fold it into
                  the system prompt; the wording therefore stays compact.
   resources      long-form guides the model pulls on demand via
-                 resources/read (hummod://guide, hummod://quirks,
-                 hummod://workflow). The protocol requires every client to
-                 support them, so this is the portable channel.
+                 resources/read (hummod://guide, hummod://workflow,
+                 hummod://quirks, hummod://variables, hummod://integrity).
+                 The protocol requires every client to support them, so
+                 this is the portable channel.
   README.md      the human-readable manual on GitHub.
 
 The content is deliberately public: it teaches how to drive the engines
@@ -30,8 +31,9 @@ WORKFLOW (follow it in this order):
    Do NOT guess ids: they differ per engine build.
 4. hummod_navigate(panel_path=...)  - switch page (label path, not ids).
 5. Set values, then VERIFY by reading the model back:
-   hummod_slider / hummod_radio / hummod_edit / hummod_set_param, each with
-   probe_vars=[...] so the effect is confirmed at model level.
+   hummod_radio accepts probe_vars=[...] and reads the model after the
+   click; hummod_slider / hummod_edit / hummod_set_param have NO probe -
+   verify those with hummod_snapshot(name=, vars=[...]) before running.
 6. hummod_go(duration_label=...)    - run. Long runs: wait=False, then poll
    hummod_busy and read results with hummod_snapshot.
 7. hummod_snapshot / hummod_history - the data (SOL has full time series;
@@ -105,16 +107,18 @@ QCP), so every snapshot tells you the model time it was taken at.
 
 ## 2. Set a parameter, then read the model back
 
-    hummod_slider(panel_path="Trauma/Hemorrhage", ordinal=0, pos=3,
-                  probe_vars=["Hemorrhage.Volume"])
+    hummod_slider(panel_path="Trauma/Hemorrhage", ordinal=0, pos=3)
     hummod_radio(panel_path="Trauma/Hemorrhage", value="On",
                  probe_vars=["Hemorrhage.Switch"])
+    hummod_snapshot(name="after_set", vars=["Hemorrhage.Volume"])
 
-probe_vars is the important part: several engines keep switch state in the
-model, not in the Win32 control, so the control cannot be read back. The
-probe reads the model instead. If the probed variable did not change, the
-setting did not take - re-check the ordinal (hummod_inspect(mode="controls")
-lists radios and sliders with their control ids) before retrying.
+Verification is the important part. hummod_radio is the only setter with
+probe_vars - it reads the model after the click, which matters because
+several engines keep switch state in the model, not in the Win32 control.
+Sliders and edits have no probe: the snapshot is the verification. If the
+probed or snapshotted value did not change, the setting did not take -
+re-check the ordinal (hummod_inspect(mode="controls") lists radios and
+sliders with their control ids) before retrying.
 
 ## 3. Run, and wait correctly
 
@@ -208,12 +212,20 @@ Note that yes/no dialogs use button ids 6 (Yes) and 7 (No), not OK/Cancel.
 
 ## QCP specifics
 
-- Must be started VISIBLE. A hidden start exits within seconds.
+- Must be started VISIBLE. A hidden start exits within seconds. (This
+  includes relaunches: hummod_restart_engine defaults to what the profile
+  needs, so QCP comes back visible.)
 - Exports .ICS (state only, about 1367 variables) - no .SOL, no time
   series, no derived values (blood pressure, hormone concentrations and
   similar have to be read off the canvas).
 - Canvas panels have no widget text at all: locate them by name or by
   command id, and read values from a screenshot (hummod_shot).
+- hummod_open_panel MUST be given category= when you know it: without it
+  every category (~445) is scanned, which can exceed the client's 30 s
+  request timeout and leave the Find dialog open.
+- Do not RIGHT-click the canvas via hummod_click: QCP opens a modal
+  popup menu there that blocks the call forever. Left-clicks work best
+  with method="post" (QCP's hit-testing ignores sent mouse messages).
 - Its ICS clock variable is "X", HumMod's is "System.X".
 - It is deterministic - identical inputs give identical outputs, which
   makes it a clean control for cross-build comparisons.
@@ -227,8 +239,8 @@ Note that yes/no dialogs use button ids 6 (Yes) and 7 (No), not OK/Cancel.
   deterministic.
 - 1.6.1 has no hypoxia->sympathetic pathway, so pneumothorax-like models
   show no tachycardia or pressor response there.
-- 1.6.1's "To Next Week/Month" is relative (it advances to the next
-  multiple of the target), so confirm where it landed via the clock.
+- 1.6.1's "To Next Hour/Day/30 Days" entries are relative (they advance to
+  the next multiple of the target), so confirm where it landed via the clock.
 - After cardiac arrest the arithmetic can break (pH above 10) and the
   heart rate can freeze. Treat post-arrest readings as void; use boolean
   state flags instead.
@@ -254,7 +266,7 @@ Known renames that break copy-paste between builds:
   blood pH        3.x: BloodPhValues.ArtysPh  1.6.1: BloodPh.ArtysPh
   sympathetic     3.x: Ganglia-Sympathetic.level
                   1.6.1: GangliaGeneral.NA(Hz)
-  alveolar PO2    3.x: LungO2.PAlveolar        1.6.1: Lung_O2.pO2
+  alveolar PO2    3.x & 1.6.1: LungO2.PAlveolar    AVP: Lung_O2.pO2
 
 Watch out for case-only twins: some builds expose both
 "Ganglia-Sympathetic.Level" and ".level"; a case-insensitive lookup can
@@ -428,7 +440,9 @@ engine builds; the key comes from hummod_engines.
     hummod_navigate(panel_path= | menu_id=)
     hummod_menu_command(item_path= | menu_id=)   any menu entry
     hummod_view_group(group=, want=)             toggle a toolbar group
-    hummod_open_panel(variable=)                  the engine's own "find panel"
+    hummod_open_panel(variable=, category=)       the engine's own "find panel"
+        pass category= when you know it: without it every category is
+        scanned, which on QCP can exceed the client's 30 s timeout
 
 ## Running
     hummod_go(duration_label=, times=, verify=, wait=)
@@ -439,16 +453,27 @@ engine builds; the key comes from hummod_engines.
     hummod_stop_state(engine=)    stop-menu state (an engine-specific signal)
 
 ## Setting values
-    hummod_radio(panel_path=, value="On"|"Off" | ordinal=, probe_vars=[])
-    hummod_slider(panel_path=, ordinal= | ctrl_id= | label= | value=, pos=,
-                  probe_vars=[])
-    hummod_set_param(panel_path=, name=, value=, probe_vars=[])
-        set a model parameter by its physical value (needs a profile table)
-    hummod_edit(panel_path=, ctrl_id= | label=, text=)
-    hummod_action(panel_path=, action=)     press a named button ("Shock Now")
+    hummod_radio(panel_path=, value="On"|"Off" | ordinal=, expected=,
+                 probe_vars=[])
+        the ONLY setter with a built-in probe: probe_vars names model
+        variables to read back after the click. expected = the page's radio
+        count (guardrail against pressing the wrong control).
+    hummod_slider(panel_path=, ordinal= | ctrl_id= | label=, pos=, value=,
+                  expected=)
+        value= asks for a physical parameter value via the profile's
+        measured index->value table (slider_value_lists)
+    hummod_set_param(panel_path=, name=, value=, exact=)
+        set a parameter by its page label + physical value (needs the
+        profile's param_slots + slider_value_lists tables)
+    hummod_edit(panel_path=, ordinal=, value=, expected=)
+    hummod_action(panel_path=, ordinal=, expected=)
+        press a canvas '!' trigger; ordinal among the page's action buttons
     hummod_button(panel_path=, caption=)    press a captioned button
     hummod_click(x=, y=) / hummod_drag(x1=,y1=,x2=,y2=)
         window-relative coordinates, for canvas-drawn widgets
+
+    hummod_radio is the only setter with probe_vars. Verify slider / edit /
+    set_param at model level with hummod_snapshot(name=, vars=[...]).
 
 ## Data
     hummod_snapshot(name=, vars=[])   export state + parse the named variables
@@ -469,6 +494,10 @@ Conventions worth remembering:
 - Requested names that do not exist come back under "missing" - that list is
   your discovery feedback loop, not an error.
 - Errors are one-line JSON and usually list the available alternatives.
+- String escape hatches exist for clients that cannot express JSON arrays
+  or booleans: probe_vars_csv / vars_csv / names_csv ('A,B,C') replace the
+  list parameters, times_str / verify_str replace numeric/boolean ones.
+  They take precedence over the typed arguments when given.
 """,
     ),
     "hummod://workflow": ("Worked protocol", WORKFLOW),

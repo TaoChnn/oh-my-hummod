@@ -15,9 +15,14 @@
     "The 'default' key is taken from the HUMMOD_ENGINE_DIR environment",
     "variable and does not belong here.",
     "",
-    "Engine folders are discovered by the EXE inside them:",
-    "  HumMod.EXE        -> 3.0.4 / 1.6.1 / HumMod-BAT / avphummod",
-    "  QCP 2005.EXE      -> QCP"
+    "The profile is detected from the engine folder's VERSION file, or from",
+    "the live top-level menu - never from the EXE name (several builds ship",
+    "the same HumMod.EXE). Builds without a VERSION file whose menu matches",
+    "another build (BAT, AVP) MUST pin their profile here.",
+    "",
+    "HUMMOD_ENGINES (a JSON string in the environment) can extend or",
+    "override this registry for one server process - handy for pointing a",
+    "test run at a copied engine folder without touching engines.json."
   ],
   "3.0.4": {
     "dir": "C:/path/to/HumMod-ClemmerSalt-3.0.4",

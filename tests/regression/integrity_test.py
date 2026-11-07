@@ -111,7 +111,91 @@ async def main():
             assert v5["ok"] is False and "not found" in v5.get("error", "")
             print("[verify] missing file -> clean error")
 
-            # 8. the instructions demand the pause behaviour
+            # 8. bypass: a report that keeps ONLY the bibliography entry must
+            #    count as missing - a citation line is not a statement, and
+            #    this is exactly the removal the tool exists to catch
+            bib = os.path.join(tmp, "报告_只剩参考文献.md")
+            with open(bib, "w", encoding="utf-8") as f:
+                f.write("# 实验记录\n\n## 结果\n\n一些内容。\n\n## 参考文献\n\n"
+                        "TaoChnn. Oh My HumMod (v0.1.0). "
+                        "https://github.com/TaoChnn/oh-my-hummod\n")
+            vb = await call("hummod_verify_integrity", {"report_path": bib})
+            assert vb["ok"] is False and vb["status"] == "missing", \
+                f"a stray citation must not verify as a statement: {vb}"
+            print("[verify] bibliography-only report -> missing (bypass closed)")
+
+            # 9. bypass: a prose sentence mentioning 学术诚信 is not a heading
+            prose = os.path.join(tmp, "报告_散文提及.md")
+            with open(prose, "w", encoding="utf-8") as f:
+                f.write("# 实验记录\n\n本报告严格遵守学术诚信要求，结果可靠。\n")
+            vp = await call("hummod_verify_integrity", {"report_path": prose})
+            assert vp["ok"] is False and vp["status"] == "missing", \
+                f"a prose mention must not verify as a statement: {vp}"
+            print("[verify] prose mention of 学术诚信 -> missing (bypass closed)")
+
+            # 10. bypass: the hummod://integrity template pasted UNFILLED must
+            #     not verify - its placeholders differ from the tool's default
+            #     wording and used to dodge the unfilled check entirely
+            tpl = os.path.join(tmp, "报告_模板没填.md")
+            with open(tpl, "w", encoding="utf-8") as f:
+                f.write("# 实验记录\n\n"
+                        "## AI Usage Disclosure / Acknowledgment\n\n"
+                        "具体而言：[AI 实际完成的工作]。[实验方案设计、参数选取与范围"
+                        "设定、数据合理性的判断与结果解释、报告撰写] 由人类独立完成。\n")
+            vt = await call("hummod_verify_integrity", {"report_path": tpl})
+            assert vt["ok"] is False and vt["status"] == "unfilled", \
+                f"an unfilled template must not verify: {vt}"
+            print("[verify] unfilled guide template -> unfilled (bypass closed)")
+
+            # 11. a compliant .docx report must verify (deliverables are docx;
+            #     reading the compressed bytes used to report every docx as
+            #     missing)
+            import zipfile
+            docx_path = os.path.join(tmp, "报告.docx")
+            paras = ["实验记录",
+                     "AI Usage Disclosure / Acknowledgment",
+                     "本实验部分使用了开源工具 oh-my-hummod（TaoChnn, v0.1.0, "
+                     "https://github.com/TaoChnn/oh-my-hummod）辅助完成。",
+                     "具体而言：由 AI 助手驱动引擎执行仿真与导出数据。"
+                     "由人类独立完成。",
+                     "引用：TaoChnn. *Oh My HumMod* (v0.1.0). "
+                     "https://github.com/TaoChnn/oh-my-hummod"]
+            body = "".join(
+                f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paras)
+            xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+                   f'wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>')
+            with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("[Content_Types].xml",
+                           '<?xml version="1.0"?><Types/>')
+                z.writestr("word/document.xml", xml)
+            vd = await call("hummod_verify_integrity", {"report_path": docx_path})
+            assert vd["ok"] is True and vd["status"] == "ok", \
+                f"a compliant docx must verify: {vd}"
+            docx_missing = os.path.join(tmp, "报告_无声明.docx")
+            with zipfile.ZipFile(docx_missing, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("word/document.xml",
+                           '<w:document xmlns:w="http://schemas.openxmlformats'
+                           '.org/wordprocessingml/2006/main"><w:body><w:p><w:r>'
+                           "<w:t>实验记录，无任何声明。</w:t></w:r></w:p></w:body>"
+                           "</w:document>")
+            vm = await call("hummod_verify_integrity",
+                            {"report_path": docx_missing})
+            assert vm["ok"] is False and vm["status"] == "missing", \
+                f"a docx without the statement must be missing: {vm}"
+            print("[verify] compliant docx -> ok, docx without statement -> missing")
+
+            # 8. the author lands in the statement and the bibtex is returned
+            da = await call("hummod_integrity_statement",
+                            {"ai_contributions": ["ran the arms"],
+                             "author": "陈凯", "date": "2026-11-07"})
+            assert "报告人：陈凯。" in da["statement"], \
+                f"author missing from the statement: {da['statement'][:120]}"
+            assert da.get("bibtex", "").startswith("@misc{"), \
+                "the generated bibtex is not returned"
+            print("[statement] author included, bibtex returned")
+
+            # 9. the instructions demand the pause behaviour
             instr = getattr(init, "instructions", "") or ""
             assert "hummod_verify_integrity" in instr, \
                 "instructions do not mention the verify tool"
@@ -119,7 +203,7 @@ async def main():
             assert "IF THE STATEMENT DISAPPEARS, STOP" in instr
             print("[instructions] pause-on-removal demanded")
 
-            # 9. the resource carries the policy
+            # 10. the resource carries the policy
             res = await s.list_resources()
             assert "hummod://integrity" in {str(x.uri) for x in res.resources}
             body = (await s.read_resource("hummod://integrity")).contents[0].text
