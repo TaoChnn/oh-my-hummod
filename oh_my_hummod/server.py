@@ -98,6 +98,8 @@ def _load_engines() -> dict[str, dict]:
 
     engines: dict[str, dict] = {}
     for key, val in raw.items():
+        if key.startswith("_"):
+            continue  # comment keys in engines.example.json are not engines
         if isinstance(val, dict):
             engines[key] = {"dir": val.get("dir", ""), "profile": val.get("profile") or None}
         else:
@@ -1563,10 +1565,21 @@ def _server_version() -> str:
 @server.tool()
 @safe
 def hummod_profile(engine: str = "default") -> str:
-    """Return the active engine profile: file menu ids, stop semantics and quirks."""
+    """Return the active engine profile: file menu ids, stop semantics, quirks, radio label semantics, page ids, panel aliases and the measured slider/parameter tables.
+
+    radio_semantics maps panel paths to the ordinal each label ('On'/'Off')
+    means - the prerequisite for hummod_radio(value=...). param_slots +
+    slider_value_lists are the prerequisite for hummod_set_param and
+    hummod_slider(value=...). menu_aliases maps canonical panel paths to
+    this build's paths."""
     _, p = get_bridge(engine)
     return json.dumps({"name": p.name, "file": p.file, "stop_cmd_id": p.stop_cmd_id,
-                       "quirks": p.quirks, "page_ids": p.page_ids})
+                       "bind_marker": p.bind_marker,
+                       "quirks": p.quirks, "page_ids": p.page_ids,
+                       "radio_semantics": p.radio_semantics,
+                       "menu_aliases": p.menu_aliases,
+                       "param_slots": p.param_slots,
+                       "slider_value_lists": p.slider_value_lists})
 
 
 @server.tool()
