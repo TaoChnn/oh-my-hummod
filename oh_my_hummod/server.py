@@ -449,7 +449,8 @@ def hummod_restart(engine: str = "default") -> str:
 
 @server.tool()
 @safe
-def hummod_restart_engine(engine: str = "default") -> str:
+def hummod_restart_engine(engine: str = "default",
+                          hidden: bool | str | None = None) -> str:
     """Relaunch the engine PROCESS so edited model XML (Structure/*.DES) takes effect.
 
     hummod_restart only resets the in-memory model state - it does NOT re-read
@@ -457,12 +458,26 @@ def hummod_restart_engine(engine: str = "default") -> str:
     process is restarted. This tool closes the engine and starts a fresh copy of
     the same engine directory, then waits for the model to bind again.
 
+    hidden defaults to what the engine's profile needs: QCP 2005 exits within
+    seconds when started hidden, so it relaunches VISIBLE; every other build
+    relaunches hidden. Pass hidden=False / hidden=True to override.
+
     Only the named engine is touched; other registered engines keep running.
     """
     if engine not in _ENGINES:
         raise RuntimeError(f"unknown engine {engine!r}; known: {sorted(_ENGINES)}")
     d = _ENGINES[engine]["dir"]
     pinned = _ENGINES[engine]["profile"]
+    if hidden is None:
+        # a blind hidden=True relaunch killed QCP engines within seconds
+        # (observed repeatedly) - ask the profile instead
+        if PROFILE_NAME and engine == "default":
+            prof = Profile.load(PROFILE_NAME)
+        elif pinned:
+            prof = Profile.load(pinned)
+        else:
+            prof = _profile_from_engine_dir(d)
+        hidden = not bool(prof and prof.quirks.get("needs_visible_start"))
     exe_name = None
     old = _bridges.get(engine)
     if old is not None:
@@ -477,7 +492,7 @@ def hummod_restart_engine(engine: str = "default") -> str:
             closed = probe.terminate()
     _bridges.pop(engine, None)
     b = Bridge(d, exe_name=exe_name)
-    pid = b.start()
+    pid = b.start(hidden=hidden)
     if PROFILE_NAME and engine == "default":
         p = Profile.load(PROFILE_NAME)
     else:
