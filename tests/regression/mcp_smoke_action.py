@@ -38,4 +38,5 @@ async def main():
             print("ACTION_SMOKE_DONE")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

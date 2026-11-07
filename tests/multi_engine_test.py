@@ -43,4 +43,5 @@ async def main():
             print("MULTI_ENGINE_OK")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

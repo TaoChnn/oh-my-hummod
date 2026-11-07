@@ -84,5 +84,6 @@ async def main():
             print("MODAL_TOOLS_OK")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 print("MODAL_DISMISS_OK")

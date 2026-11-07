@@ -22,19 +22,19 @@ from oh_my_hummod.profile import Profile            # noqa: E402
 from oh_my_hummod.server import _detect_profile, _profile_from_engine_dir  # noqa: E402
 
 
-def test_version_file_wins_over_menu():
+def test_version_file_wins_over_menu(tmp_path):
     """A VERSION file pins the profile even when the menu is wrong/partial."""
-    with tempfile.TemporaryDirectory() as d:
-        with open(os.path.join(d, "VERSION"), "w") as f:
-            f.write('VERSION="1.6.1"\n')
+    d = str(tmp_path)
+    with open(os.path.join(d, "VERSION"), "w") as f:
+        f.write('VERSION="1.6.1"\n')
 
-        class FakeBridge:
-            engine_dir = d
+    class FakeBridge:
+        engine_dir = d
 
-            def menu_tree(self):  # would mislead: pretend a partial 3.0.4-like menu
-                raise AssertionError("menu_tree must not be consulted when VERSION matches a profile")
+        def menu_tree(self):  # would mislead: pretend a partial 3.0.4-like menu
+            raise AssertionError("menu_tree must not be consulted when VERSION matches a profile")
 
-        p = _detect_profile(FakeBridge())
+    p = _detect_profile(FakeBridge())
     assert p.name == "hummod_1.6.1", f"expected hummod_1.6.1 from VERSION, got {p.name}"
     assert p.bind_marker == "Startup"
     print("  OK  VERSION file pins hummod_1.6.1 without touching the menu")
@@ -117,8 +117,8 @@ def test_e2e_engine_copy():
 
 
 if __name__ == "__main__":
-    test_version_file_wins_over_menu()
     with tempfile.TemporaryDirectory() as td:
+        test_version_file_wins_over_menu(td)
         test_version_parsing(td)
     test_builtin_profiles_load()
     test_e2e_engine_copy()
