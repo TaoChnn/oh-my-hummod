@@ -168,7 +168,7 @@ def get_bridge(engine: str = "default") -> tuple[Bridge, Profile]:
         b = Bridge(d, exe_name=p.exe_names[0])
         if not b.attach():
             raise RuntimeError(f"engine {engine!r} not running; call hummod_start first")
-        p = p  # explicit override wins even if the menu disagrees
+        # explicit HUMMOD_PROFILE override wins even if the menu disagrees
     else:
         b = Bridge(d)  # exe name discovered from the running process
         if not b.attach():

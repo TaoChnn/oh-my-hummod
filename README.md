@@ -31,7 +31,8 @@ ask me before guessing any of the following local details:
 1. Engine directory — where is my HumMod / QCP engine folder?
    (e.g. C:\HumMod). If I don't know, help me locate the engine EXE.
 2. Engine build — HumMod 3.0.4 / 1.6.1 / HumMod-BAT / avphummod / QCP 2005?
-   If unsure, detect it from the EXE name and confirm with me.
+   If unsure, detect it from the engine folder's VERSION file (or the live
+   menu — never the EXE name, several builds share one) and confirm with me.
 3. MCP client — Claude Code, Codex CLI, or ZCode? (so you register it
    in the right config file)
 4. Python — should we use a local venv? Use its absolute python.exe
@@ -81,8 +82,11 @@ python tests\engine_smoke.py --engine C:\HumMod --profile hummod_3.0.4
 ::   expect: ENGINE_SMOKE_OK
 ```
 
-The profile is auto-detected from the engine EXE in `HUMMOD_ENGINE_DIR`
-(`hummod_3.0.4` / `hummod_1.6.1` / `qcp_2005` / `hummod_bat` / `avphummod`).
+The profile is auto-detected from the engine folder's **VERSION file**, falling
+back to the **live top-level menu** (`hummod_3.0.4` / `hummod_1.6.1` /
+`qcp_2005` — never the EXE name: several builds ship the same `HumMod.EXE`).
+`hummod_bat` / `avphummod` have no VERSION file and a menu that matches 3.0.4,
+so they can only be used with a **pinned** profile in `engines.json`.
 `tests\discover.py --engine C:\Some\Other\Build` prints everything needed to
 add a profile for an unknown build.
 
@@ -166,8 +170,13 @@ ZCode keeps MCP servers in `~/.zcode/cli/config.json` under `mcp.servers`:
 - Use the **absolute path** of the Python that has `oh-my-hummod` installed
   (`where python` / `which python`) if the client's PATH differs from your
   shell's.
-- `HUMMOD_PROFILE` may be omitted — the server auto-detects the engine by its
-  EXE name.
+- `HUMMOD_PROFILE` may be omitted — the server detects the profile from the
+  engine folder's VERSION file, or its live top-level menu (not the EXE name).
+  Builds whose menu cannot be distinguished (HumMod-BAT, avphummod) must pin
+  the profile in `engines.json`.
+- `HUMMOD_ENGINES` (a JSON string, same shape as `engines.json`) extends the
+  registry for one server process — handy for pointing a test run at a copied
+  engine folder without touching `engines.json`.
 - After editing the library's source, **restart the MCP server**: clients
   cache both the tool list and the loaded module for the life of a session.
 - Some clients cap tool-call duration (commonly 30 s). Long runs
@@ -186,11 +195,13 @@ be discovered:
 |---|---|
 | `file` | File-menu command ids for the SOL/ICS save/load dialogs |
 | `dialog_edit_ids` | native file-dialog filename Edit control ids |
-| `stop_cmd_id` | completion semantics: grayed Stop = simulation finished |
+| `stop_cmd_id` | Stop-menu command id — the completion-signal *fallback* for engines without a status-bar run signal (QCP's two-phase Stop); on HumMod the status bar decides |
 | `bind_marker` | top-level menu label that signals the model finished binding |
-| `radio_semantics` | unlabeled radio buttons (owner-drawn captions) → meaning |
+| `radio_semantics` | unlabeled radio buttons (owner-drawn captions) → ordinal meaning |
 | `menu_aliases` | canonical panel path → build-specific path |
 | `page_ids` | panels that have no menu label at all (bitmap toolbars) |
+| `param_slots` | parameter label → page scroll-bar control id (drives `hummod_set_param`) |
+| `slider_value_lists` | measured index→value scale per slider (drives `hummod_set_param` / `hummod_slider(value=)`) |
 | `quirks` | engine behaviours that change tool behaviour (slider commit, EPO, model noise) |
 
 Adding a new engine version = run `tests/discover.py` against it, note the
@@ -203,14 +214,14 @@ differences, drop a JSON in `profiles/`. No code changes.
 | Engine lifecycle | `hummod_status` `hummod_engines` `hummod_start` `hummod_restart` `hummod_restart_engine` (relaunch the process so model XML is re-read) |
 | Discovery | `hummod_inspect` (`mode="menu"/"controls"/"both"`) `hummod_profile` `hummod_probe_radio` (auto-discover radio semantics) |
 | Navigation | `hummod_navigate` (panel path) `hummod_menu_command` (menu path or command id) `hummod_view_group` (toggle a toolbar group) `hummod_open_panel` (via the engine's own "find panel" dialog) |
-| Running | `hummod_go` (duration, `times=`, `verify=`, `wait=`) `hummod_busy` `hummod_stop_state` |
+| Running | `hummod_go` (`duration_label=`, `times=`, `verify=`, `wait=`) `hummod_busy` `hummod_stop_state` |
 | Controls | `hummod_radio` `hummod_edit` `hummod_slider` `hummod_action` (`!` triggers) `hummod_button` (captioned buttons) `hummod_click` `hummod_drag` (coordinates) |
 | Dialogs | `hummod_dialogs` `hummod_dialog_button` `hummod_modals` `hummod_dismiss_modal` `hummod_popup` `hummod_listbox` |
 | Data | `hummod_snapshot` `hummod_get_vars` `hummod_history` (time series) `hummod_shot` (screenshot of the engine window) `hummod_save_ics` / `hummod_load_ics` (initial-condition files) |
 | Parameters | `hummod_set_param` (set a model parameter by its physical value) |
 | Reporting | `hummod_integrity_statement` (the academic-integrity statement a report must end with) `hummod_verify_integrity` (check a report still carries it) |
 
-Every tool takes an optional `engine=` key, so one server can drive several
+Most tools take an optional `engine=` key, so one server can drive several
 engine builds at once (see `engines.json` - copy `engines.example.json` to
 create it; it is git-ignored because it holds your local paths);
 `hummod_engines` lists them with running state and detected profile.
@@ -277,8 +288,9 @@ bypass this server to drive the engine directly.
   correctly — do not second-guess it from the menu.
 - **Verify every setting at model level.** Switch state often lives in the
   model rather than in the Win32 control, so the control cannot be read
-  back. Pass `probe_vars=[...]` to `hummod_radio` / `hummod_slider` and read
-  the model instead.
+  back. `hummod_radio` is the only setter with `probe_vars=[...]`; verify
+  `hummod_slider` / `hummod_edit` / `hummod_set_param` with a
+  `hummod_snapshot` and check the value moved.
 - **Sliders differ per build and per control.** Some commit linearly, some
   ignore position 0, some never commit at all. Set, then read back.
 - **QCP must be started visible** (`hummod_start(key="qcp", hidden=False)`);
@@ -303,6 +315,40 @@ skeleton and cost **zero code** to add - a thin profile JSON at most.
 Heterogeneous engines (1.6.1, QCP) need one profile each. To qualify an
 unknown build, run `python tests/discover.py --engine C:\path\to\build`.
 
+## Tests
+
+The one to run first — it drives a live engine through a whole profile:
+
+```bat
+set HUMMOD_ENGINE_DIR=C:\path\to\engine
+python tests\engine_smoke.py --engine C:\path\to\engine --profile hummod_3.0.4
+                             # attach, binding, menus, radio (SOL-verified), a run
+                             # -> ENGINE_SMOKE_OK
+```
+
+Without an engine:
+
+```bat
+python tests\test_solver.py                        # parser unit tests (fixtures included)
+python tests\regression\guide_test.py              # the manual is reachable
+python tests\regression\guide_schema_test.py       # the manual matches the real tool schemas
+python tests\regression\integrity_test.py          # the integrity-statement tool + bypass cases
+python tests\regression\test_profile_detection.py  # VERSION-file / menu detection
+```
+
+With an engine (point these at a **copy**, not at an engine another session
+is using):
+
+```bat
+python tests\mcp_smoke.py                    # MCP-protocol level: tools over stdio
+python tests\mcp_smoke_qcp.py                # the same for QCP
+python tests\multi_engine_test.py            # one session across every engine
+```
+
+`tests/regression/` holds one file per bug that a field trial actually hit,
+so a fix cannot silently regress. `tests/probes/` holds the
+development-time investigation scripts — useful when an unfamiliar engine
+build misbehaves, not needed otherwise. `tests/README.md` explains both.
 
 ## Licensing
 

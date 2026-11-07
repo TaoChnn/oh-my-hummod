@@ -4,6 +4,10 @@ __pycache__/
 build/
 dist/
 *.SOL
+*.ICS
+!tests/fixtures/sample.ICS
+_slider_pos0_out/
+_slider_value_out/
 mcp-exports/
 .agents/
 
