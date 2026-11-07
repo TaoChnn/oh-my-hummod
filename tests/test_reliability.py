@@ -23,8 +23,11 @@ def test_export_path_never_reuses_existing_file(tmp_path, monkeypatch):
 
 
 def test_engines_json_has_no_machine_specific_paths():
-    with open(os.path.join(os.path.dirname(__file__), "..", "engines.json"), encoding="utf-8") as f:
-        assert json.load(f) == {}
+    root = os.path.join(os.path.dirname(__file__), "..")
+    # The portable upstream layout deliberately does not track this file;
+    # users copy the example locally and .gitignore keeps absolute paths out.
+    assert not os.path.exists(os.path.join(root, "engines.json"))
+    assert "engines.json" in open(os.path.join(root, ".gitignore"), encoding="utf-8").read()
 
 
 def test_async_go_response_has_truthful_counts(monkeypatch):
