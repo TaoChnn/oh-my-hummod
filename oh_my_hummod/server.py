@@ -45,6 +45,8 @@ OUTDIR = os.environ.get("HUMMOD_OUTDIR", os.path.join(os.getcwd(), "mcp-exports"
 
 _ASYNC_GO_JOBS: dict[str, dict] = {}
 _ASYNC_GO_LOCK = threading.Lock()
+_ENGINE_OPERATION_LOCKS: dict[str, threading.Lock] = {}
+_ENGINE_OPERATION_LOCKS_LOCK = threading.Lock()
 _EXPORT_LOCK = threading.Lock()
 _RESERVED_EXPORTS: set[str] = set()
 
@@ -74,6 +76,36 @@ def _register_resources() -> None:
 
 
 _register_resources()
+
+
+def _engine_operation_lock(engine: str) -> threading.Lock:
+    with _ENGINE_OPERATION_LOCKS_LOCK:
+        return _ENGINE_OPERATION_LOCKS.setdefault(engine, threading.Lock())
+
+
+def _claim_engine_operation(engine: str, operation: str) -> threading.Lock:
+    lock = _engine_operation_lock(engine)
+    if not lock.acquire(blocking=False):
+        raise RuntimeError(
+            f"engine {engine!r} is busy with another operation; cannot start {operation}")
+    return lock
+
+
+def engine_operation(fn):
+    """Serialize operations that must not race an asynchronous Go task."""
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        try:
+            bound = inspect.signature(fn).bind_partial(*args, **kwargs)
+            engine = bound.arguments.get("engine", "default")
+        except TypeError:
+            engine = kwargs.get("engine", "default")
+        lock = _claim_engine_operation(engine, fn.__name__)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            lock.release()
+    return wrapped
 
 
 def _load_engines() -> dict[str, dict]:
@@ -445,6 +477,7 @@ def hummod_start(key: str = "default", hidden: bool | str = True,
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_restart(engine: str = "default") -> str:
     """Reset the model to its initial state (label-discovered Restart command). Waits until settled."""
     b, _ = get_bridge(engine)
@@ -456,6 +489,7 @@ def hummod_restart(engine: str = "default") -> str:
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_restart_engine(engine: str = "default") -> str:
     """Relaunch the engine PROCESS so edited model XML (Structure/*.DES) takes effect.
 
@@ -719,91 +753,117 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
             raise RuntimeError(f"verify_str={verify_str!r} is not a boolean")
         verify = v
     times = max(1, int(times))
+    operation_lock = _claim_engine_operation(engine, "hummod_go")
+    release_lock_here = True
     t_before = _sim_time(b, p) if verify else None
     t0 = time.time()
-    async_job = None
-    if not wait:
-        with _ASYNC_GO_LOCK:
-            active = next((j for j in _ASYNC_GO_JOBS.values()
-                           if j["engine"] == engine and j["state"] in {"starting", "running"}), None)
-            if active:
-                raise RuntimeError(
-                    f"engine {engine!r} already has async Go job {active['job_id']} running; "
-                    "poll it before starting another run")
-            async_job = {"job_id": uuid4().hex, "engine": engine,
-                         "requested_times": times, "started_times": 0,
-                         "completed_times": 0, "state": "starting", "failed": None}
-            _ASYNC_GO_JOBS[async_job["job_id"]] = async_job
-    started_all = True
-    signals = []
-    polls = 0.0
-    for i in range(times):
-        before_status = b.status_text()
-        try:
-            b.command(node.cmd_id)
-        except Exception as exc:
-            if async_job is not None:
-                with _ASYNC_GO_LOCK:
-                    async_job["state"] = "failed"
-                    async_job["failed"] = str(exc)
-            raise
+    try:
         if not wait:
             with _ASYNC_GO_LOCK:
-                async_job["started_times"] = 1
+                async_job = {"job_id": uuid4().hex, "engine": engine,
+                             "requested_times": times, "dispatched_times": 0,
+                             "started_times": 0, "completed_times": 0,
+                             "state": "starting", "failed": None,
+                             "verification": "pending",
+                             "sim_time_before": t_before}
+                _ASYNC_GO_JOBS[async_job["job_id"]] = async_job
+            before_status = b.status_text()
+            b.command(node.cmd_id)
+            with _ASYNC_GO_LOCK:
+                async_job["dispatched_times"] = 1
                 async_job["state"] = "running"
             job_id = async_job["job_id"]
-            job = async_job
 
             def finish_async() -> None:
                 try:
-                    first = _wait_done(engine, before_status=before_status)
-                    if not first.get("started", False):
-                        raise RuntimeError("engine did not report the first run as started")
-                    for _ in range(1, times):
-                        before_next = b.status_text()
+                    for run_index in range(times):
+                        if run_index == 0:
+                            before = before_status
+                            result = _wait_done(engine, before_status=before)
+                        else:
+                            before = b.status_text()
+                            with _ASYNC_GO_LOCK:
+                                async_job["dispatched_times"] += 1
+                            b.command(node.cmd_id)
+                            result = _wait_done(engine, before_status=before)
+                        if not result.get("started", False):
+                            raise RuntimeError(
+                                f"engine did not report Go run {run_index + 1} as started")
                         with _ASYNC_GO_LOCK:
-                            job["started_times"] += 1
-                        b.command(node.cmd_id)
-                        _wait_done(engine, before_status=before_next)
+                            async_job["started_times"] += 1
+                            async_job["completed_times"] += 1
+                            async_job.setdefault("signals", []).append(result.get("signal", "?"))
+                    if verify:
+                        t_after = _sim_time(b, p)
                         with _ASYNC_GO_LOCK:
-                            job["completed_times"] += 1
+                            async_job["sim_time_after"] = t_after
+                            if t_before is None or t_after is None:
+                                async_job["verification"] = "unverified"
+                            else:
+                                delta = round(t_after - t_before, 4)
+                                async_job["sim_minutes_advanced"] = delta
+                                if delta <= 0:
+                                    raise RuntimeError(
+                                        f"model clock did not advance (before={t_before}, after={t_after})")
+                                async_job["verification"] = "verified"
                     with _ASYNC_GO_LOCK:
-                        job["completed_times"] = times
-                        job["state"] = "completed"
+                        async_job["state"] = "completed"
                 except Exception as exc:
                     with _ASYNC_GO_LOCK:
-                        job["state"] = "failed"
-                        job["failed"] = str(exc)
+                        async_job["state"] = "failed"
+                        async_job["failed"] = str(exc)
+                finally:
+                    operation_lock.release()
 
+            release_lock_here = False
             threading.Thread(target=finish_async, name=f"hummod-go-{job_id[:8]}", daemon=True).start()
-            out = {"ok": True, "job_id": job_id, "ran": duration_label,
-                   "requested_times": times, "started_times": 1,
-                   "completed_times": 0, "state": "running", "waited": False,
-                   "note": "poll hummod_stop_state / hummod_busy; completion is reported by job state",
-                   "wall_seconds": round(time.time() - t0, 1)}
-            if verify:
-                out["sim_time_before"] = t_before
-            return json.dumps(out)
-        res = _wait_done(engine, before_status=before_status)
-        polls += res.get("elapsed", 0.0)
-        signals.append(res.get("signal", "?"))
-        started_all = started_all and res.get("started", False)
-    out = {"ok": True, "ran": duration_label, "times": times,
-           "wall_seconds": round(time.time() - t0, 1),
-           "stop_poll_seconds": round(polls, 1),
-           "started": started_all,
-           "signal": signals[0] if len(set(signals)) == 1 else signals}
-    if not started_all:
-        out["note"] = ("the engine never showed as busy - the run may have completed "
-                       "before the first probe; use verify=True to confirm the "
-                       "simulation clock moved")
-    if verify:
-        t_after = _sim_time(b, p)
-        out["sim_time_before"] = t_before
-        out["sim_time_after"] = t_after
-        out["sim_minutes_advanced"] = (None if (t_before is None or t_after is None)
-                                       else round(t_after - t_before, 4))
-    return json.dumps(out)
+            return json.dumps({"ok": True, "job_id": job_id, "ran": duration_label,
+                               "requested_times": times, "dispatched_times": 1,
+                               "started_times": 0, "completed_times": 0,
+                               "state": "running", "waited": False,
+                               "verification": "pending",
+                               "note": "poll hummod_stop_state / hummod_busy; completion is reported by job state",
+                               "wall_seconds": round(time.time() - t0, 1),
+                               **({"sim_time_before": t_before} if verify else {})})
+
+        started_all = True
+        signals = []
+        polls = 0.0
+        for _ in range(times):
+            before_status = b.status_text()
+            b.command(node.cmd_id)
+            res = _wait_done(engine, before_status=before_status)
+            polls += res.get("elapsed", 0.0)
+            signals.append(res.get("signal", "?"))
+            started_all = started_all and res.get("started", False)
+        out = {"ok": True, "ran": duration_label, "times": times,
+               "wall_seconds": round(time.time() - t0, 1),
+               "stop_poll_seconds": round(polls, 1),
+               "started": started_all,
+               "signal": signals[0] if len(set(signals)) == 1 else signals}
+        if not started_all:
+            out["note"] = ("the engine never showed as busy - the run may have completed "
+                           "before the first probe; use verify=True to confirm the "
+                           "simulation clock moved")
+        if verify:
+            t_after = _sim_time(b, p)
+            out["sim_time_before"] = t_before
+            out["sim_time_after"] = t_after
+            out["sim_minutes_advanced"] = (None if (t_before is None or t_after is None)
+                                           else round(t_after - t_before, 4))
+            out["verification"] = ("verified" if t_before is not None and t_after is not None
+                                    and t_after > t_before else "unverified")
+        return json.dumps(out)
+    except Exception as exc:
+        if not wait:
+            with _ASYNC_GO_LOCK:
+                if 'async_job' in locals():
+                    async_job["state"] = "failed"
+                    async_job["failed"] = str(exc)
+        raise
+    finally:
+        if release_lock_here:
+            operation_lock.release()
 
 
 @server.tool()
@@ -827,7 +887,7 @@ def hummod_busy(engine: str = "default") -> str:
     solving = "solving" in text.lower() and "done" not in text.lower()
     with _ASYNC_GO_LOCK:
         jobs = [dict(v) for v in _ASYNC_GO_JOBS.values() if v["engine"] == engine]
-    active_job = next((j for j in jobs if j["state"] == "running"), None)
+    active_job = next((j for j in jobs if j["state"] in {"starting", "running"}), None)
     return json.dumps({"ok": True,
                        "busy": (not responsive) or solving or stop_enabled or bool(active_job),
                        "ui_responsive": responsive,
