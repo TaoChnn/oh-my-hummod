@@ -30,8 +30,9 @@ WORKFLOW (follow it in this order):
    Do NOT guess ids: they differ per engine build.
 4. hummod_navigate(panel_path=...)  - switch page (label path, not ids).
 5. Set values, then VERIFY by reading the model back:
-   hummod_slider / hummod_radio / hummod_edit / hummod_set_param, each with
-   probe_vars=[...] so the effect is confirmed at model level.
+   hummod_radio accepts probe_vars=[...] and reads the model after the
+   click; hummod_slider / hummod_edit / hummod_set_param have NO probe -
+   verify those with hummod_snapshot(name=, vars=[...]) before running.
 6. hummod_go(duration_label=...)    - run. Long runs: wait=False, then poll
    hummod_busy and read results with hummod_snapshot.
 7. hummod_snapshot / hummod_history - the data (SOL has full time series;
@@ -105,16 +106,18 @@ QCP), so every snapshot tells you the model time it was taken at.
 
 ## 2. Set a parameter, then read the model back
 
-    hummod_slider(panel_path="Trauma/Hemorrhage", ordinal=0, pos=3,
-                  probe_vars=["Hemorrhage.Volume"])
+    hummod_slider(panel_path="Trauma/Hemorrhage", ordinal=0, pos=3)
     hummod_radio(panel_path="Trauma/Hemorrhage", value="On",
                  probe_vars=["Hemorrhage.Switch"])
+    hummod_snapshot(name="after_set", vars=["Hemorrhage.Volume"])
 
-probe_vars is the important part: several engines keep switch state in the
-model, not in the Win32 control, so the control cannot be read back. The
-probe reads the model instead. If the probed variable did not change, the
-setting did not take - re-check the ordinal (hummod_inspect(mode="controls")
-lists radios and sliders with their control ids) before retrying.
+Verification is the important part. hummod_radio is the only setter with
+probe_vars - it reads the model after the click, which matters because
+several engines keep switch state in the model, not in the Win32 control.
+Sliders and edits have no probe: the snapshot is the verification. If the
+probed or snapshotted value did not change, the setting did not take -
+re-check the ordinal (hummod_inspect(mode="controls") lists radios and
+sliders with their control ids) before retrying.
 
 ## 3. Run, and wait correctly
 
@@ -428,7 +431,9 @@ engine builds; the key comes from hummod_engines.
     hummod_navigate(panel_path= | menu_id=)
     hummod_menu_command(item_path= | menu_id=)   any menu entry
     hummod_view_group(group=, want=)             toggle a toolbar group
-    hummod_open_panel(variable=)                  the engine's own "find panel"
+    hummod_open_panel(variable=, category=)       the engine's own "find panel"
+        pass category= when you know it: without it every category is
+        scanned, which on QCP can exceed the client's 30 s timeout
 
 ## Running
     hummod_go(duration_label=, times=, verify=, wait=)
@@ -439,16 +444,27 @@ engine builds; the key comes from hummod_engines.
     hummod_stop_state(engine=)    stop-menu state (an engine-specific signal)
 
 ## Setting values
-    hummod_radio(panel_path=, value="On"|"Off" | ordinal=, probe_vars=[])
-    hummod_slider(panel_path=, ordinal= | ctrl_id= | label= | value=, pos=,
-                  probe_vars=[])
-    hummod_set_param(panel_path=, name=, value=, probe_vars=[])
-        set a model parameter by its physical value (needs a profile table)
-    hummod_edit(panel_path=, ctrl_id= | label=, text=)
-    hummod_action(panel_path=, action=)     press a named button ("Shock Now")
+    hummod_radio(panel_path=, value="On"|"Off" | ordinal=, expected=,
+                 probe_vars=[])
+        the ONLY setter with a built-in probe: probe_vars names model
+        variables to read back after the click. expected = the page's radio
+        count (guardrail against pressing the wrong control).
+    hummod_slider(panel_path=, ordinal= | ctrl_id= | label=, pos=, value=,
+                  expected=)
+        value= asks for a physical parameter value via the profile's
+        measured index->value table (slider_value_lists)
+    hummod_set_param(panel_path=, name=, value=, exact=)
+        set a parameter by its page label + physical value (needs the
+        profile's param_slots + slider_value_lists tables)
+    hummod_edit(panel_path=, ordinal=, value=, expected=)
+    hummod_action(panel_path=, ordinal=, expected=)
+        press a canvas '!' trigger; ordinal among the page's action buttons
     hummod_button(panel_path=, caption=)    press a captioned button
     hummod_click(x=, y=) / hummod_drag(x1=,y1=,x2=,y2=)
         window-relative coordinates, for canvas-drawn widgets
+
+    hummod_radio is the only setter with probe_vars. Verify slider / edit /
+    set_param at model level with hummod_snapshot(name=, vars=[...]).
 
 ## Data
     hummod_snapshot(name=, vars=[])   export state + parse the named variables
