@@ -621,9 +621,9 @@ def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
             "edits": sum(1 for c in controls if c["cls"] == "Edit"),
             "sliders": sum(1 for c in controls if c["cls"] == "ScrollBar"),
             "buttons": sum(1 for c in controls if c["button"]),
-            # ctrl ids, not list indexes: the controls list is what gets
-            # truncated for long pages, so indexes would silently point at
-            # the wrong widget afterwards
+            # Keep the legacy list indexes for clients already consuming the
+            # field, and add stable control ids for truncated responses.
+            "checked": [i for i, c in enumerate(controls) if c["checked"]],
             "checked_ctrl_ids": [c["id"] for c in controls if c["checked"]],
         }
         out["button_captions"] = [c["text"] for c in controls
