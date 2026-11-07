@@ -1024,6 +1024,7 @@ def hummod_shot(name: str, engine: str = "default", restore: bool | str = True) 
     except Exception:
         _discard_export_path(path)
         raise
+    _release_export_path(path)
     return json.dumps({"ok": True, "path": path, "size": [w, h],
                        "origin": "window-relative (x right, y down)",
                        "window_rect": list(b.window_rect()),
@@ -1338,6 +1339,7 @@ def hummod_probe_radio(panel_path: str, probe_vars: list[str] | dict,
             except Exception:
                 _discard_export_path(sol)
                 raise
+            _release_export_path(sol)
             results.append({"ordinal": i, "ctrl_id": r.ctrl_id, "values": vals})
     finally:
         # Restore the conventional first radio even when an export fails.
@@ -1580,6 +1582,7 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
         except Exception:
             _discard_export_path(path)
             raise
+        _release_export_path(path)
     else:  # QCP family: ICs snapshot instead of SOL
         save_id = p.file.get("save_ics")
         if save_id is None:
@@ -1590,6 +1593,7 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
         except Exception:
             _discard_export_path(path)
             raise
+        _release_export_path(path)
     return path
 
 
@@ -1682,6 +1686,7 @@ def hummod_save_ics(name: str, engine: str = "default") -> str:
     except Exception:
         _discard_export_path(path)
         raise
+    _release_export_path(path)
     return json.dumps({"ok": True, "path": path})
 
 
