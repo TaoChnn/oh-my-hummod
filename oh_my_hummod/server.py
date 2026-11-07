@@ -721,19 +721,38 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
     times = max(1, int(times))
     t_before = _sim_time(b, p) if verify else None
     t0 = time.time()
+    async_job = None
+    if not wait:
+        with _ASYNC_GO_LOCK:
+            active = next((j for j in _ASYNC_GO_JOBS.values()
+                           if j["engine"] == engine and j["state"] in {"starting", "running"}), None)
+            if active:
+                raise RuntimeError(
+                    f"engine {engine!r} already has async Go job {active['job_id']} running; "
+                    "poll it before starting another run")
+            async_job = {"job_id": uuid4().hex, "engine": engine,
+                         "requested_times": times, "started_times": 0,
+                         "completed_times": 0, "state": "starting", "failed": None}
+            _ASYNC_GO_JOBS[async_job["job_id"]] = async_job
     started_all = True
     signals = []
     polls = 0.0
     for i in range(times):
         before_status = b.status_text()
-        b.command(node.cmd_id)
+        try:
+            b.command(node.cmd_id)
+        except Exception as exc:
+            if async_job is not None:
+                with _ASYNC_GO_LOCK:
+                    async_job["state"] = "failed"
+                    async_job["failed"] = str(exc)
+            raise
         if not wait:
-            job_id = uuid4().hex
-            job = {"job_id": job_id, "engine": engine, "requested_times": times,
-                   "started_times": 1, "completed_times": 0, "state": "running",
-                   "failed": None}
             with _ASYNC_GO_LOCK:
-                _ASYNC_GO_JOBS[job_id] = job
+                async_job["started_times"] = 1
+                async_job["state"] = "running"
+            job_id = async_job["job_id"]
+            job = async_job
 
             def finish_async() -> None:
                 try:
@@ -806,11 +825,15 @@ def hummod_busy(engine: str = "default") -> str:
     # 3.0.4 field trial: the UI thread stays responsive while the model runs,
     # so "not responsive" alone misses whole runs - weight the other signals.
     solving = "solving" in text.lower() and "done" not in text.lower()
+    with _ASYNC_GO_LOCK:
+        jobs = [dict(v) for v in _ASYNC_GO_JOBS.values() if v["engine"] == engine]
+    active_job = next((j for j in jobs if j["state"] == "running"), None)
     return json.dumps({"ok": True,
-                       "busy": (not responsive) or solving or stop_enabled,
+                       "busy": (not responsive) or solving or stop_enabled or bool(active_job),
                        "ui_responsive": responsive,
                        "stop_enabled": stop_enabled,
-                       "status_text": text})
+                       "status_text": text,
+                       **({"async_jobs": jobs} if jobs else {})})
 
 
 def _sim_time(b: Bridge, p: Profile) -> float | None:

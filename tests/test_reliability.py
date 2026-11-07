@@ -54,3 +54,6 @@ def test_async_go_response_has_truthful_counts(monkeypatch):
     assert out["completed_times"] == 0
     assert out["state"] == "running"
     assert out["job_id"]
+    blocked = json.loads(server.hummod_go("10 Sec", times=1, wait=False))
+    assert blocked["ok"] is False
+    assert "already has async Go job" in blocked["error"]
