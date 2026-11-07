@@ -103,4 +103,5 @@ async def main() -> int:
     return 1 if failures else 0
 
 
-sys.exit(asyncio.run(main()))
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

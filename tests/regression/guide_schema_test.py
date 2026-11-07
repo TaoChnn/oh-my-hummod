@@ -77,4 +77,5 @@ async def main():
                   f"{checked} documented calls checked against schemas)")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

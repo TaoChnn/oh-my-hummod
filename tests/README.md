@@ -18,6 +18,16 @@ tests/
 
 ## What to run
 
+The deterministic suite is safe to collect with pytest:
+
+```bat
+python -m pytest -q
+```
+
+Field-trial scripts are protected by `if __name__ == "__main__"` and are not
+executed during pytest collection. Run those scripts directly only with the
+engine copy and MCP client environment they require.
+
 If you just want to know whether the tool works on your machine:
 
 ```bat
@@ -28,14 +38,15 @@ python tests\engine_smoke.py --engine C:\path\to\your\engine --profile hummod_3.
 Expect `ENGINE_SMOKE_OK`. This one covers attach, model binding, the menu
 tree, a radio (verified against the model), and a short run.
 
-Without an engine you can still check the parser and the manual:
+Without an engine you can still check the parser and the deterministic server
+helpers:
 
 ```bat
-python tests\test_solver.py       :: ALL 9 TESTS PASSED
-python tests\regression\guide_test.py         :: GUIDE_OK
-python tests\regression\guide_schema_test.py  :: GUIDE_SCHEMA_OK
-python tests\regression\integrity_test.py     :: INTEGRITY_OK
+python -m pytest -q               :: deterministic tests passed
 ```
+
+`guide_test.py` and `integrity_test.py` exercise the MCP stdio subprocess and
+must be run directly; their result depends on the local MCP client/runtime.
 
 ## regression/
 

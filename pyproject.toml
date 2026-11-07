@@ -9,7 +9,7 @@ description = "Oh My HumMod - drive HumMod / QCP physiology engines from MCP cli
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["mcp>=1.2"]
+dependencies = ["mcp>=2.0,<3"]
 
 [project.scripts]
 oh-my-hummod = "oh_my_hummod.server:main"

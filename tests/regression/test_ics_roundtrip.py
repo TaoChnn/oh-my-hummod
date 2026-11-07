@@ -69,4 +69,5 @@ async def main():
             return 0 if ok else 1
 
 
-sys.exit(asyncio.run(main()))
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

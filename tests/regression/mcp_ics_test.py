@@ -56,4 +56,5 @@ async def main():
             print("ICS_TEST_" + ("OK" if ok else "FAILED"))
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
