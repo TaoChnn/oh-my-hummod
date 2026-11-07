@@ -888,8 +888,15 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
             out["sim_time_after"] = t_after
             out["sim_minutes_advanced"] = (None if (t_before is None or t_after is None)
                                            else round(t_after - t_before, 4))
-            out["verification"] = ("verified" if t_before is not None and t_after is not None
-                                    and t_after > t_before else "unverified")
+            if t_before is not None and t_after is not None and t_after <= t_before:
+                out["ok"] = False
+                out["state"] = "failed"
+                out["verification"] = "failed"
+                out["note"] = (f"model clock did not advance (before={t_before}, "
+                                f"after={t_after})")
+            else:
+                out["verification"] = ("verified" if t_before is not None and t_after is not None
+                                        else "unverified")
         return json.dumps(out)
     except Exception as exc:
         if not wait:

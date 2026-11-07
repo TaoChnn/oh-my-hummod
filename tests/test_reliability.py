@@ -230,6 +230,26 @@ def test_async_go_fails_when_verified_clock_does_not_advance(monkeypatch):
     assert "clock did not advance" in snapshot["failed"]
 
 
+def test_sync_go_marks_stalled_verified_clock_as_failure(monkeypatch):
+    class Node:
+        cmd_id = 1
+    class Tree:
+        def walk(self, _): return Node()
+    class Bridge:
+        def menu_tree(self): return Tree()
+        def status_text(self): return ""
+        def command(self, _): pass
+    class Profile: stop_cmd_id = 1
+
+    monkeypatch.setattr(server, "get_bridge", lambda _engine: (Bridge(), Profile()))
+    monkeypatch.setattr(server, "_sim_time", lambda *a, **k: 100.0)
+    monkeypatch.setattr(server, "_wait_done", lambda *a, **k: {"started": True, "elapsed": 0})
+    out = json.loads(server.hummod_go("10 Sec", verify=True, engine="sync-clock-stalled"))
+    assert out["ok"] is False
+    assert out["state"] == "failed"
+    assert out["verification"] == "failed"
+
+
 def test_restart_conflicts_with_async_go(monkeypatch):
     class Node:
         cmd_id = 1
