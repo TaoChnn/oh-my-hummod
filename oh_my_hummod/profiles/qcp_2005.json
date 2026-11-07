@@ -14,7 +14,7 @@
     1001
   ],
   "stop_cmd_id": 24,
-  "bind_marker": "Help",
+  "bind_marker": "View",
   "quirks": {
     "no_sol_file": true,
     "data_note": "QCP has no SOL export; state snapshots are Save ICs (text { VAR \"Name\" value }), history via Options > Clipboard.",

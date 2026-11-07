@@ -6,9 +6,10 @@ Three layers, each with a different delivery mechanism:
                  (InitializeResult.instructions). Clients MAY fold it into
                  the system prompt; the wording therefore stays compact.
   resources      long-form guides the model pulls on demand via
-                 resources/read (hummod://guide, hummod://quirks,
-                 hummod://workflow). The protocol requires every client to
-                 support them, so this is the portable channel.
+                 resources/read (hummod://guide, hummod://workflow,
+                 hummod://quirks, hummod://variables, hummod://integrity).
+                 The protocol requires every client to support them, so
+                 this is the portable channel.
   README.md      the human-readable manual on GitHub.
 
 The content is deliberately public: it teaches how to drive the engines
@@ -211,12 +212,20 @@ Note that yes/no dialogs use button ids 6 (Yes) and 7 (No), not OK/Cancel.
 
 ## QCP specifics
 
-- Must be started VISIBLE. A hidden start exits within seconds.
+- Must be started VISIBLE. A hidden start exits within seconds. (This
+  includes relaunches: hummod_restart_engine defaults to what the profile
+  needs, so QCP comes back visible.)
 - Exports .ICS (state only, about 1367 variables) - no .SOL, no time
   series, no derived values (blood pressure, hormone concentrations and
   similar have to be read off the canvas).
 - Canvas panels have no widget text at all: locate them by name or by
   command id, and read values from a screenshot (hummod_shot).
+- hummod_open_panel MUST be given category= when you know it: without it
+  every category (~445) is scanned, which can exceed the client's 30 s
+  request timeout and leave the Find dialog open.
+- Do not RIGHT-click the canvas via hummod_click: QCP opens a modal
+  popup menu there that blocks the call forever. Left-clicks work best
+  with method="post" (QCP's hit-testing ignores sent mouse messages).
 - Its ICS clock variable is "X", HumMod's is "System.X".
 - It is deterministic - identical inputs give identical outputs, which
   makes it a clean control for cross-build comparisons.
@@ -230,8 +239,8 @@ Note that yes/no dialogs use button ids 6 (Yes) and 7 (No), not OK/Cancel.
   deterministic.
 - 1.6.1 has no hypoxia->sympathetic pathway, so pneumothorax-like models
   show no tachycardia or pressor response there.
-- 1.6.1's "To Next Week/Month" is relative (it advances to the next
-  multiple of the target), so confirm where it landed via the clock.
+- 1.6.1's "To Next Hour/Day/30 Days" entries are relative (they advance to
+  the next multiple of the target), so confirm where it landed via the clock.
 - After cardiac arrest the arithmetic can break (pH above 10) and the
   heart rate can freeze. Treat post-arrest readings as void; use boolean
   state flags instead.
@@ -257,7 +266,7 @@ Known renames that break copy-paste between builds:
   blood pH        3.x: BloodPhValues.ArtysPh  1.6.1: BloodPh.ArtysPh
   sympathetic     3.x: Ganglia-Sympathetic.level
                   1.6.1: GangliaGeneral.NA(Hz)
-  alveolar PO2    3.x: LungO2.PAlveolar        1.6.1: Lung_O2.pO2
+  alveolar PO2    3.x & 1.6.1: LungO2.PAlveolar    AVP: Lung_O2.pO2
 
 Watch out for case-only twins: some builds expose both
 "Ganglia-Sympathetic.Level" and ".level"; a case-insensitive lookup can
@@ -485,6 +494,10 @@ Conventions worth remembering:
 - Requested names that do not exist come back under "missing" - that list is
   your discovery feedback loop, not an error.
 - Errors are one-line JSON and usually list the available alternatives.
+- String escape hatches exist for clients that cannot express JSON arrays
+  or booleans: probe_vars_csv / vars_csv / names_csv ('A,B,C') replace the
+  list parameters, times_str / verify_str replace numeric/boolean ones.
+  They take precedence over the typed arguments when given.
 """,
     ),
     "hummod://workflow": ("Worked protocol", WORKFLOW),
