@@ -1276,9 +1276,15 @@ def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | 
         how = f"{how}+value"
 
     b.set_slider(target.hwnd, _parent_of(target.hwnd), pos, commit_endscroll=True)
+    # slider_commits is true / "partial" / false in the profiles; anything
+    # not explicitly True means the commit is not guaranteed - surface the
+    # profile's measured note (which sliders commit, which silently ignore).
+    # The old `is False` check never fired: no profile stores a plain False.
     note = None
-    if p.quirks.get("slider_commits") is False:
-        note = p.quirks.get("slider_note")
+    if p.quirks.get("slider_commits", True) is not True:
+        note = p.quirks.get("slider_note") or (
+            "slider commit is not guaranteed on this build - "
+            "verify via hummod_snapshot")
     out = {"ok": True, "pos": pos, "located_by": how,
            "ctrl_id": target.ctrl_id, "slider_count": len(sliders),
            "verify": "snapshot the model value", "quirk": note}
