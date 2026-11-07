@@ -557,7 +557,10 @@ def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
             "edits": sum(1 for c in controls if c["cls"] == "Edit"),
             "sliders": sum(1 for c in controls if c["cls"] == "ScrollBar"),
             "buttons": sum(1 for c in controls if c["button"]),
-            "checked": [i for i, c in enumerate(controls) if c["checked"]],
+            # ctrl ids, not list indexes: the controls list is what gets
+            # truncated for long pages, so indexes would silently point at
+            # the wrong widget afterwards
+            "checked_ctrl_ids": [c["id"] for c in controls if c["checked"]],
         }
         out["button_captions"] = [c["text"] for c in controls
                                    if c["button"] and c["text"].strip()
@@ -695,11 +698,13 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
     timeout (30 s by default): a 3-week step needs several minutes, and a
     blocking call is aborted by the client while the engine keeps simulating.
     Poll with hummod_stop_state (stop_enabled=false means finished) and
-    hummod_busy, then read the result with hummod_snapshot.
+    hummod_busy, then read the result with hummod_snapshot. wait=False starts
+    ONE step: with times>1 only the first is launched - call hummod_go again
+    after each completion for the rest.
 
-    Completion is detected from the engine's UI thread (the model solves on it) plus
-    the Stop menu item - on HumMod 3.0.4 the Stop item stays gray even while the
-    model is running, so it alone cannot tell 'finished' from 'still running'.
+    Completion is detected from the status bar on HumMod ('Solving ...' ->
+    'Solving ... Done' - the Stop menu item is ENABLED while solving, so it is
+    not a completion signal) and from the two-phase Stop behaviour on QCP.
 
     times_str / verify_str are string-typed escape hatches for MCP clients that
     cannot express a JSON number or boolean (some clients quote every scalar):
@@ -733,11 +738,19 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
         before_status = b.status_text()
         b.command(node.cmd_id)
         if not wait:
-            out = {"ok": True, "ran": duration_label, "times": times,
+            # wait=False can only babysit ONE step: firing the next Go while
+            # the previous run is still solving would queue or drop commands
+            # (engine-dependent). Report what actually started.
+            out = {"ok": True, "ran": duration_label, "times": 1,
                    "waited": False,
                    "note": ("run started; poll hummod_stop_state / hummod_busy until "
                             "the engine is idle, then hummod_snapshot for the state"),
                    "wall_seconds": round(time.time() - t0, 1)}
+            if times > 1:
+                out["times_requested"] = times
+                out["note"] += (f"; wait=False starts ONE step - call hummod_go "
+                                f"again after each completion for the remaining "
+                                f"{times - 1}")
             if verify:
                 out["sim_time_before"] = t_before
             return json.dumps(out)
