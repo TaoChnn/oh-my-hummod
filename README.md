@@ -16,50 +16,22 @@ avphummod (Modular) ✅ · HumMod standalone 1.6.1 ✅ · QCP 2005 ✅ (core)
 
 ## One Prompt to Start
 
-Copy this to your local agent (Claude Code / Codex CLI / ZCode, etc.).
-It will clone the repo, read the README, ask you for the few things it
-cannot detect, then install, register and smoke-test the server.
+Copy this to your local agent (Claude Code / Codex CLI / ZCode, etc.) — it
+will read the README itself and only ask you what it cannot detect:
 
 ```text
 Please set up the "oh-my-hummod" MCP server for me on this Windows machine.
 
-Repo: https://github.com/TaoChnn/oh-my-hummod.git
+Repo: https://github.com/TaoChnn/oh-my-hummod.git — clone it and follow its
+README. Ask me only:
+1. my engine folder (e.g. C:\HumMod) — help me locate the engine EXE if I
+   don't know it
+2. which MCP client this is, so you register it in the right config file
 
-First, clone the repo and read its README.md carefully. Follow it, but
-ask me before guessing any of the following local details:
-
-1. Engine directory — where is my HumMod / QCP engine folder?
-   (e.g. C:\HumMod). If I don't know, help me locate the engine EXE.
-2. Engine build — HumMod 3.0.4 / 1.6.1 / HumMod-BAT / avphummod / QCP 2005?
-   If unsure, detect it from the engine folder's VERSION file (or the live
-   menu — never the EXE name, several builds share one) and confirm with me.
-3. MCP client — Claude Code, Codex CLI, or ZCode? (so you register it
-   in the right config file)
-4. Python — should we use a local venv? Use its absolute python.exe
-   when registering the server.
-5. Export directory — where should .SOL/.ICS exports go?
-   (e.g. C:\hummod-exports, must be writable)
-
-Then:
-1. Create a venv, `pip install -e .` in the repo.
-2. Set HUMMOD_ENGINE_DIR and HUMMOD_OUTDIR.
-3. Copy `engines.example.json` to `engines.json` and fill in the folders
-   where the engine builds live on THIS machine (`engines.json` is
-   git-ignored - it holds local paths and must not be committed).
-4. Run `python tests\engine_smoke.py --engine <engine dir> --profile <profile>`
-   and confirm it prints ENGINE_SMOKE_OK. If it fails, show me the exact
-   command, error output and detected profile before continuing.
-5. Register the MCP server with my client using the venv's absolute
-   python.exe and the env vars above.
-6. Restart the client and verify the hummod tools are listed.
-7. Run a read-only check: `hummod_status` and `hummod_engines`.
-
-Rules:
-- Do not modify engine binaries or model files.
-- Do not run long simulations; a short `hummod_go` or status check is enough.
-- Do not click/drag blindly in the engine window.
-- If any step is ambiguous, ask me instead of guessing.
-- At the end, summarize what you changed and the exact commands you ran.
+Then: install, register, restart the client, and verify with the tools:
+hummod_status -> hummod_start -> hummod_inspect(mode="menu"). Show me the
+detected profile. Do not modify engine files, and do not run long
+simulations.
 ```
 
 ## Quick start (fresh Windows machine)
@@ -69,26 +41,23 @@ Requirements: **Windows 10/11**, **Python 3.10+**, and an engine folder
 ships no engine).
 
 ```bat
-:: 1) get the code
 git clone https://github.com/TaoChnn/oh-my-hummod.git
 cd oh-my-hummod
-
-:: 2) install (pulls in the `mcp` package)
 pip install -e .
-
-:: 3) sanity check with your engine folder
-set HUMMOD_ENGINE_DIR=C:\HumMod
-python tests\engine_smoke.py --engine C:\HumMod --profile hummod_3.0.4
-::   expect: ENGINE_SMOKE_OK
+set HUMMOD_ENGINE_DIR=C:\HumMod      :: your engine folder
 ```
 
-The profile is auto-detected from the engine folder's **VERSION file**, falling
-back to the **live top-level menu** (`hummod_3.0.4` / `hummod_1.6.1` /
-`qcp_2005` — never the EXE name: several builds ship the same `HumMod.EXE`).
-`hummod_bat` / `avphummod` have no VERSION file and a menu that matches 3.0.4,
-so they can only be used with a **pinned** profile in `engines.json`.
-`tests\discover.py --engine C:\Some\Other\Build` prints everything needed to
-add a profile for an unknown build.
+Register the server with your MCP client (next section), restart the client,
+then verify with the tools themselves — the server re-checks process attach,
+profile detection and model binding on every call, so the first tool call
+*is* the smoke test:
+
+1. `hummod_status` — server up, engine build detected
+2. `hummod_start` — launches the engine
+3. `hummod_inspect(mode="menu")` — the live menu tree
+
+Build not detected? `python tests\discover.py --engine C:\path\to\build`
+prints what a new build needs; the full test suite lives in `tests/README.md`.
 
 ## Register with your MCP client
 
