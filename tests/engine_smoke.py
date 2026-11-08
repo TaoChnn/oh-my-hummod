@@ -110,7 +110,7 @@ def main():
     # 1 Min run
     go = tree.walk("Go/1 Min")
     b.command(go.cmd_id)
-    wall = b.wait_idle(p.stop_cmd_id, 120)
+    wall = b.wait_idle(p.stop_cmd_id, 120)["elapsed"]
     print(f"\nGo 1 Min settled in {wall:.1f}s")
 
     # restart settles
