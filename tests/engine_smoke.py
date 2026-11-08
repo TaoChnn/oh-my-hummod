@@ -76,8 +76,10 @@ def main():
         raise SystemExit("expected >=2 radios on the panel")
 
     os.makedirs(args.out, exist_ok=True)
-    def snap(name, want):
-        path = os.path.join(args.out, f"{args.profile}_{name}.SOL")
+    stamp = time.strftime("%Y%m%d_%H%M%S")  # the bridge refuses to overwrite
+    def snap(name, want):                    # existing exports, so every run
+        path = os.path.join(args.out,        # writes fresh, timestamped files
+                            f"{args.profile}_{name}_{stamp}.SOL")
         b.save_file_dialog(p.file["save_sol"], path, tuple(p.dialog_edit_ids))
         vals = parse_sol(path, want)
         print(f"  {name}: {vals}")
@@ -110,7 +112,7 @@ def main():
     # 1 Min run
     go = tree.walk("Go/1 Min")
     b.command(go.cmd_id)
-    wall = b.wait_idle(p.stop_cmd_id, 120)
+    wall = b.wait_idle(p.stop_cmd_id, 120)["elapsed"]
     print(f"\nGo 1 Min settled in {wall:.1f}s")
 
     # restart settles
