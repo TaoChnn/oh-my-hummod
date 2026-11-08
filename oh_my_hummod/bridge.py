@@ -1039,7 +1039,8 @@ class Bridge:
         import os
         target_path = os.path.abspath(target_path)
         if os.path.exists(target_path):
-            os.remove(target_path)
+            raise FileExistsError(
+                f"refusing to overwrite existing export: {target_path}")
         # event modals (1.6.1 pops them on parameter changes) would block the
         # export - clear them first instead of failing
         self.ensure_ready()

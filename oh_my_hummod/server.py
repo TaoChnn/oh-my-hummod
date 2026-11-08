@@ -19,9 +19,11 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import typing
 from datetime import datetime
+from uuid import uuid4
 
 from mcp.server.mcpserver import MCPServer
 
@@ -40,6 +42,13 @@ except ImportError:  # run as a plain script: python oh_my_hummod/server.py
 ENGINE_DIR = os.environ.get("HUMMOD_ENGINE_DIR", os.path.join(os.getcwd(), "engine"))
 PROFILE_NAME = os.environ.get("HUMMOD_PROFILE", "")
 OUTDIR = os.environ.get("HUMMOD_OUTDIR", os.path.join(os.getcwd(), "mcp-exports"))
+
+_ASYNC_GO_JOBS: dict[str, dict] = {}
+_ASYNC_GO_LOCK = threading.Lock()
+_ENGINE_OPERATION_LOCKS: dict[str, threading.Lock] = {}
+_ENGINE_OPERATION_LOCKS_LOCK = threading.Lock()
+_EXPORT_LOCK = threading.Lock()
+_RESERVED_EXPORTS: set[str] = set()
 
 # instructions: returned in the MCP handshake (InitializeResult.instructions).
 # A client MAY fold it into the system prompt - the wording stays compact and
@@ -67,6 +76,50 @@ def _register_resources() -> None:
 
 
 _register_resources()
+
+
+def _engine_operation_lock(engine: str) -> threading.Lock:
+    identity = _engine_identity(engine)
+    with _ENGINE_OPERATION_LOCKS_LOCK:
+        return _ENGINE_OPERATION_LOCKS.setdefault(identity, threading.Lock())
+
+
+def _engine_identity(engine: str) -> str:
+    """Canonicalize engine keys so aliases pointing to one folder share a lock."""
+    try:
+        path = _ENGINES[engine]["dir"]
+    except (KeyError, TypeError):
+        return engine
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.path.normpath(path))))
+
+
+def _job_matches_engine(job: dict, engine: str) -> bool:
+    return _engine_identity(job.get("engine", "")) == _engine_identity(engine)
+
+
+def _claim_engine_operation(engine: str, operation: str) -> threading.Lock:
+    lock = _engine_operation_lock(engine)
+    if not lock.acquire(blocking=False):
+        raise RuntimeError(
+            f"engine {engine!r} is busy with another operation; cannot start {operation}")
+    return lock
+
+
+def engine_operation(fn):
+    """Serialize operations that must not race an asynchronous Go task."""
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        try:
+            bound = inspect.signature(fn).bind_partial(*args, **kwargs)
+            engine = bound.arguments.get("engine") or bound.arguments.get("key", "default")
+        except TypeError:
+            engine = kwargs.get("engine", "default")
+        lock = _claim_engine_operation(engine, fn.__name__)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            lock.release()
+    return wrapped
 
 
 def _load_engines() -> dict[str, dict]:
@@ -388,6 +441,7 @@ def hummod_status(engine: str = "default") -> str:
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_start(key: str = "default", hidden: bool | str = True,
                  engine: str | None = None) -> str:
     """Start an engine if not running. Key comes from engines.json.
@@ -411,6 +465,13 @@ def hummod_start(key: str = "default", hidden: bool | str = True,
         key = engine
     if key not in _ENGINES:
         raise RuntimeError(f"unknown engine {key!r}; known: {sorted(_ENGINES)}")
+    identity = _engine_identity(key)
+    for existing, (running, _) in list(_bridges.items()):
+        if (_engine_identity(existing) == identity and running.main
+                and user32.IsWindow(running.main)):
+            return json.dumps({"ok": True, "pid": running.pid,
+                               "engine": existing,
+                               "note": "same engine directory already running"})
     if key in _bridges and _bridges[key][0].main and user32.IsWindow(_bridges[key][0].main):
         return json.dumps({"ok": True, "pid": _bridges[key][0].pid, "note": "already running"})
     b = Bridge(_ENGINES[key]["dir"])  # exe name discovered from the folder
@@ -440,6 +501,7 @@ def hummod_start(key: str = "default", hidden: bool | str = True,
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_restart(engine: str = "default") -> str:
     """Reset the model to its initial state (label-discovered Restart command). Waits until settled."""
     b, _ = get_bridge(engine)
@@ -451,6 +513,7 @@ def hummod_restart(engine: str = "default") -> str:
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_restart_engine(engine: str = "default",
                           hidden: bool | str | None = None) -> str:
     """Relaunch the engine PROCESS so edited model XML (Structure/*.DES) takes effect.
@@ -516,6 +579,7 @@ def hummod_restart_engine(engine: str = "default",
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
                    mode: str = "both", panel_path: str | None = None) -> str:
     """Inspect the engine: mode='menu' (menu tree with command ids and full paths),
@@ -557,9 +621,9 @@ def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
             "edits": sum(1 for c in controls if c["cls"] == "Edit"),
             "sliders": sum(1 for c in controls if c["cls"] == "ScrollBar"),
             "buttons": sum(1 for c in controls if c["button"]),
-            # ctrl ids, not list indexes: the controls list is what gets
-            # truncated for long pages, so indexes would silently point at
-            # the wrong widget afterwards
+            # Keep the legacy list indexes for clients already consuming the
+            # field, and add stable control ids for truncated responses.
+            "checked": [i for i, c in enumerate(controls) if c["checked"]],
             "checked_ctrl_ids": [c["id"] for c in controls if c["checked"]],
         }
         out["button_captions"] = [c["text"] for c in controls
@@ -593,6 +657,7 @@ def hummod_inspect(max_chars: int | str = 20000, engine: str = "default",
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_view_group(group: str, want: bool | str = True, engine: str = "default") -> str:
     """Show/hide a View-menu toolbar group (e.g. 'View/Basic Physiology').
 
@@ -643,6 +708,7 @@ def hummod_view_group(group: str, want: bool | str = True, engine: str = "defaul
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_navigate(panel_path: str | None = None, engine: str = "default",
                     menu_id: int | str | None = None) -> str:
     """Switch the engine to a panel page by menu path, e.g. 'Trauma/Hemorrhage' or 'Diagnosis/Chart'.
@@ -665,7 +731,12 @@ def hummod_stop_state(engine: str = "default") -> str:
     stop_id = p.stop_cmd_id
     if stop_id is None:
         stop_id = b.menu_tree().find("Stop").cmd_id
-    return json.dumps({"stop_enabled": bool(b.menu_item_enabled(stop_id))})
+    out = {"stop_enabled": bool(b.menu_item_enabled(stop_id))}
+    with _ASYNC_GO_LOCK:
+        jobs = [dict(v) for v in _ASYNC_GO_JOBS.values() if _job_matches_engine(v, engine)]
+    if jobs:
+        out["async_jobs"] = jobs
+    return json.dumps(out)
 
 
 def _csv_list(s: str | None) -> list[str]:
@@ -697,10 +768,10 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
     it to finish. Use it for runs that take longer than the MCP client's request
     timeout (30 s by default): a 3-week step needs several minutes, and a
     blocking call is aborted by the client while the engine keeps simulating.
-    Poll with hummod_stop_state (stop_enabled=false means finished) and
-    hummod_busy, then read the result with hummod_snapshot. wait=False starts
-    ONE step: with times>1 only the first is launched - call hummod_go again
-    after each completion for the rest.
+    Poll with hummod_stop_state and hummod_busy, then read the result with
+    hummod_snapshot. With wait=False, the first step is dispatched immediately
+    and a background worker runs any remaining requested steps sequentially;
+    the returned job state and counts are authoritative.
 
     Completion is detected from the status bar on HumMod ('Solving ...' ->
     'Solving ... Done' - the Stop menu item is ENABLED while solving, so it is
@@ -729,51 +800,136 @@ def hummod_go(duration_label: str, times: int | str = 1, verify: bool | str = Fa
             raise RuntimeError(f"verify_str={verify_str!r} is not a boolean")
         verify = v
     times = max(1, int(times))
-    t_before = _sim_time(b, p) if verify else None
-    t0 = time.time()
-    started_all = True
-    signals = []
-    polls = 0.0
-    for i in range(times):
-        before_status = b.status_text()
-        b.command(node.cmd_id)
+    operation_lock = _claim_engine_operation(engine, "hummod_go")
+    release_lock_here = True
+    try:
+        t_before = _sim_time(b, p) if verify else None
+        t0 = time.time()
         if not wait:
-            # wait=False can only babysit ONE step: firing the next Go while
-            # the previous run is still solving would queue or drop commands
-            # (engine-dependent). Report what actually started.
-            out = {"ok": True, "ran": duration_label, "times": 1,
-                   "waited": False,
-                   "note": ("run started; poll hummod_stop_state / hummod_busy until "
-                            "the engine is idle, then hummod_snapshot for the state"),
-                   "wall_seconds": round(time.time() - t0, 1)}
-            if times > 1:
-                out["times_requested"] = times
-                out["note"] += (f"; wait=False starts ONE step - call hummod_go "
-                                f"again after each completion for the remaining "
-                                f"{times - 1}")
-            if verify:
-                out["sim_time_before"] = t_before
-            return json.dumps(out)
-        res = _wait_done(engine, before_status=before_status)
-        polls += res.get("elapsed", 0.0)
-        signals.append(res.get("signal", "?"))
-        started_all = started_all and res.get("started", False)
-    out = {"ok": True, "ran": duration_label, "times": times,
-           "wall_seconds": round(time.time() - t0, 1),
-           "stop_poll_seconds": round(polls, 1),
-           "started": started_all,
-           "signal": signals[0] if len(set(signals)) == 1 else signals}
-    if not started_all:
-        out["note"] = ("the engine never showed as busy - the run may have completed "
-                       "before the first probe; use verify=True to confirm the "
-                       "simulation clock moved")
-    if verify:
-        t_after = _sim_time(b, p)
-        out["sim_time_before"] = t_before
-        out["sim_time_after"] = t_after
-        out["sim_minutes_advanced"] = (None if (t_before is None or t_after is None)
-                                       else round(t_after - t_before, 4))
-    return json.dumps(out)
+            with _ASYNC_GO_LOCK:
+                async_job = {"job_id": uuid4().hex, "engine": engine,
+                             "requested_times": times, "dispatched_times": 0,
+                             "started_times": 0, "completed_times": 0,
+                             "state": "starting", "failed": None,
+                             "verification": "pending",
+                             "sim_time_before": t_before}
+                _ASYNC_GO_JOBS[async_job["job_id"]] = async_job
+            before_status = b.status_text()
+            b.command(node.cmd_id)
+            with _ASYNC_GO_LOCK:
+                async_job["dispatched_times"] = 1
+                async_job["state"] = "running"
+            job_id = async_job["job_id"]
+
+            def finish_async() -> None:
+                try:
+                    for run_index in range(times):
+                        if run_index == 0:
+                            before = before_status
+                            result = _wait_done(engine, before_status=before)
+                        else:
+                            before = b.status_text()
+                            with _ASYNC_GO_LOCK:
+                                async_job["dispatched_times"] += 1
+                            b.command(node.cmd_id)
+                            result = _wait_done(engine, before_status=before)
+                        if not result.get("started", False):
+                            raise RuntimeError(
+                                f"engine did not report Go run {run_index + 1} as started")
+                        with _ASYNC_GO_LOCK:
+                            async_job["started_times"] += 1
+                            async_job["completed_times"] += 1
+                            async_job.setdefault("signals", []).append(result.get("signal", "?"))
+                    if verify:
+                        t_after = _sim_time(b, p)
+                        with _ASYNC_GO_LOCK:
+                            async_job["sim_time_after"] = t_after
+                            if t_before is None or t_after is None:
+                                async_job["verification"] = "unverified"
+                            else:
+                                delta = round(t_after - t_before, 4)
+                                async_job["sim_minutes_advanced"] = delta
+                                if delta <= 0:
+                                    async_job["verification"] = "failed"
+                                    raise RuntimeError(
+                                        f"model clock did not advance (before={t_before}, after={t_after})")
+                                async_job["verification"] = "verified"
+                    with _ASYNC_GO_LOCK:
+                        async_job["state"] = "completed"
+                except Exception as exc:
+                    with _ASYNC_GO_LOCK:
+                        async_job["state"] = "failed"
+                        async_job["failed"] = str(exc)
+                finally:
+                    operation_lock.release()
+
+            worker = threading.Thread(target=finish_async,
+                                      name=f"hummod-go-{job_id[:8]}", daemon=True)
+            # Only transfer lock ownership after Thread.start succeeds. If
+            # thread creation is rejected by the host, the outer finally
+            # must release the engine lock instead of leaving it wedged.
+            worker.start()
+            release_lock_here = False
+            return json.dumps({"ok": True, "job_id": job_id, "ran": duration_label,
+                               "requested_times": times, "dispatched_times": 1,
+                               "started_times": 0, "completed_times": 0,
+                               "state": "running", "waited": False,
+                               "verification": "pending",
+                               "note": "poll hummod_stop_state / hummod_busy; completion is reported by job state",
+                               "wall_seconds": round(time.time() - t0, 1),
+                               **({"sim_time_before": t_before} if verify else {})})
+
+        started_all = True
+        completed_times = 0
+        signals = []
+        polls = 0.0
+        for _ in range(times):
+            before_status = b.status_text()
+            b.command(node.cmd_id)
+            res = _wait_done(engine, before_status=before_status)
+            polls += res.get("elapsed", 0.0)
+            signals.append(res.get("signal", "?"))
+            if not res.get("started", False):
+                started_all = False
+                break
+            completed_times += 1
+        out = {"ok": started_all, "ran": duration_label, "times": times,
+               "completed_times": completed_times,
+               "wall_seconds": round(time.time() - t0, 1),
+               "stop_poll_seconds": round(polls, 1),
+               "started": started_all,
+               "state": "completed" if started_all else "failed",
+               "signal": signals[0] if len(set(signals)) == 1 else signals}
+        if not started_all:
+            out["note"] = ("the engine never showed as busy - the run may have completed "
+                           "before the first probe; use verify=True to confirm the "
+                           "simulation clock moved")
+        if verify:
+            t_after = _sim_time(b, p)
+            out["sim_time_before"] = t_before
+            out["sim_time_after"] = t_after
+            out["sim_minutes_advanced"] = (None if (t_before is None or t_after is None)
+                                           else round(t_after - t_before, 4))
+            if t_before is not None and t_after is not None and t_after <= t_before:
+                out["ok"] = False
+                out["state"] = "failed"
+                out["verification"] = "failed"
+                out["note"] = (f"model clock did not advance (before={t_before}, "
+                                f"after={t_after})")
+            else:
+                out["verification"] = ("verified" if t_before is not None and t_after is not None
+                                        else "unverified")
+        return json.dumps(out)
+    except Exception as exc:
+        if not wait:
+            with _ASYNC_GO_LOCK:
+                if 'async_job' in locals():
+                    async_job["state"] = "failed"
+                    async_job["failed"] = str(exc)
+        raise
+    finally:
+        if release_lock_here:
+            operation_lock.release()
 
 
 @server.tool()
@@ -795,11 +951,15 @@ def hummod_busy(engine: str = "default") -> str:
     # 3.0.4 field trial: the UI thread stays responsive while the model runs,
     # so "not responsive" alone misses whole runs - weight the other signals.
     solving = "solving" in text.lower() and "done" not in text.lower()
+    with _ASYNC_GO_LOCK:
+        jobs = [dict(v) for v in _ASYNC_GO_JOBS.values() if _job_matches_engine(v, engine)]
+    active_job = next((j for j in jobs if j["state"] in {"starting", "running"}), None)
     return json.dumps({"ok": True,
-                       "busy": (not responsive) or solving or stop_enabled,
+                       "busy": (not responsive) or solving or stop_enabled or bool(active_job),
                        "ui_responsive": responsive,
                        "stop_enabled": stop_enabled,
-                       "status_text": text})
+                       "status_text": text,
+                       **({"async_jobs": jobs} if jobs else {})})
 
 
 def _sim_time(b: Bridge, p: Profile) -> float | None:
@@ -822,6 +982,7 @@ def _sim_time(b: Bridge, p: Profile) -> float | None:
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_button(panel_path: str, caption: str, engine: str = "default") -> str:
     """Click a *labelled* panel button by its caption, e.g. 'Neurological Signs' on Diagnosis/Evaluation.
 
@@ -849,6 +1010,7 @@ def hummod_button(panel_path: str, caption: str, engine: str = "default") -> str
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_menu_command(item_path: str | None = None, engine: str = "default",
                         menu_id: int | str | None = None) -> str:
     """Press any menu entry by path, e.g. 'Restart', 'File/Save Initial Conditions', 'Go/5 Min' (does not wait; use hummod_go for durations).
@@ -872,6 +1034,7 @@ def hummod_menu_command(item_path: str | None = None, engine: str = "default",
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_shot(name: str, engine: str = "default", restore: bool | str = True) -> str:
     """Screenshot the engine window to a PNG in the MCP output dir.
 
@@ -882,12 +1045,15 @@ def hummod_shot(name: str, engine: str = "default", restore: bool | str = True) 
     b, _ = get_bridge(engine)
     os.makedirs(OUTDIR, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-    path = os.path.join(OUTDIR, safe_name + (".png" if not safe_name.lower().endswith(".png") else ""))
-    if os.path.exists(path):
-        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".png")
+    path = _unique_export_path(safe_name, ".png")
     if restore:
         b.restore_window()
-    w, h = b.capture_png(path)
+    try:
+        w, h = b.capture_png(path)
+    except Exception:
+        _discard_export_path(path)
+        raise
+    _release_export_path(path)
     return json.dumps({"ok": True, "path": path, "size": [w, h],
                        "origin": "window-relative (x right, y down)",
                        "window_rect": list(b.window_rect()),
@@ -928,6 +1094,7 @@ def hummod_popup(engine: str = "default") -> str:
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_listbox(dialog_title: str, control_id: int | str, engine: str = "default",
                    select: int | str | None = None, select_text: str | None = None) -> str:
     """Read the items and the current selection of a list box inside an open dialog.
@@ -961,6 +1128,7 @@ def hummod_listbox(dialog_title: str, control_id: int | str, engine: str = "defa
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_dialog_button(dialog_title: str, caption: str, engine: str = "default") -> str:
     """Press a button of an open dialog by its caption (e.g. 'View Panel', 'Close')."""
     b, _ = get_bridge(engine)
@@ -975,6 +1143,7 @@ def hummod_dialog_button(dialog_title: str, caption: str, engine: str = "default
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_open_panel(variable: str, engine: str = "default",
                        category: str | None = None,
                        panel: str | None = None) -> str:
@@ -1034,6 +1203,7 @@ def hummod_open_panel(variable: str, engine: str = "default",
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_click(x: int | str, y: int | str, engine: str = "default", button: str = "left",
                  double: bool | str = False, method: str = "message") -> str:
     """Click at window-relative (x, y) - the coordinate space of hummod_shot.
@@ -1047,6 +1217,7 @@ def hummod_click(x: int | str, y: int | str, engine: str = "default", button: st
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_drag(x1: int | str, y1: int | str, x2: int | str, y2: int | str,
                 engine: str = "default", steps: int | str = 20) -> str:
     """Drag from (x1,y1) to (x2,y2) in window coordinates - canvas slidebars."""
@@ -1056,6 +1227,7 @@ def hummod_drag(x1: int | str, y1: int | str, x2: int | str, y2: int | str,
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_radio(panel_path: str, ordinal: int | str | None = None,
                  expected: int | str | None = None,
                  value: str | None = None, probe_vars: list[str] | dict | None = None,
@@ -1137,6 +1309,7 @@ def _probe_model(b: Bridge, p: Profile, probe_vars: list[str]) -> dict:
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_action(panel_path: str, ordinal: int | str,
                   expected: int | str | None = None, engine: str = "default") -> str:
     """Click an action button on a panel page - the canvas triggers drawn as '!'
@@ -1166,6 +1339,7 @@ def hummod_action(panel_path: str, ordinal: int | str,
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_probe_radio(panel_path: str, probe_vars: list[str] | dict,
                        engine: str = "default") -> str:
     """Discover radio-button semantics automatically.
@@ -1183,18 +1357,23 @@ def hummod_probe_radio(panel_path: str, probe_vars: list[str] | dict,
     os.makedirs(OUTDIR, exist_ok=True)
     want = {v.lower() for v in probe_vars}
     results = []
-    for i, r in enumerate(radios):
-        b.press(r.hwnd)
-        time.sleep(0.4)
-        sol = os.path.join(OUTDIR, f"probe_{panel_path.replace('/', '_')}_{i}.SOL")
-        if os.path.exists(sol):
-            os.remove(sol)
-        b.save_file_dialog(p.file["save_sol"], sol, tuple(p.dialog_edit_ids))
-        vals = parse_export(sol, want)
-        results.append({"ordinal": i, "ctrl_id": r.ctrl_id, "values": vals})
-    # restore: press the first radio again (usually Off) and reset the model
-    b.press(radios[0].hwnd)
-    time.sleep(0.2)
+    try:
+        for i, r in enumerate(radios):
+            b.press(r.hwnd)
+            time.sleep(0.4)
+            sol = _unique_export_path(f"probe_{panel_path.replace('/', '_')}_{i}", ".SOL")
+            try:
+                b.save_file_dialog(p.file["save_sol"], sol, tuple(p.dialog_edit_ids))
+                vals = parse_export(sol, want)
+            except Exception:
+                _discard_export_path(sol)
+                raise
+            _release_export_path(sol)
+            results.append({"ordinal": i, "ctrl_id": r.ctrl_id, "values": vals})
+    finally:
+        # Restore the conventional first radio even when an export fails.
+        b.press(radios[0].hwnd)
+        time.sleep(0.2)
     snippet = {panel_path: {f"radio{i}": "?" for i in range(len(radios))}}
     return json.dumps({"ok": True, "panel": panel_path, "count": len(radios),
                        "probes": results,
@@ -1205,6 +1384,7 @@ def hummod_probe_radio(panel_path: str, probe_vars: list[str] | dict,
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_edit(panel_path: str, ordinal: int | str, value: str,
                 expected: int | str | None = None, engine: str = "default") -> str:
     """Set an Edit (text) control on a panel page and click its apply button ("> button adjacent by control id). Ords per page from hummod_inspect; expected = total edit count (guardrail)."""
@@ -1226,11 +1406,15 @@ def hummod_edit(panel_path: str, ordinal: int | str, value: str,
     b.set_text(e.hwnd, value)
     b.press(apply_btn.hwnd)
     time.sleep(0.15)
-    return json.dumps({"ok": True, "panel": panel_path, "edit_ordinal": ordinal, "value": value})
+    return json.dumps({"ok": True, "panel": panel_path, "edit_ordinal": ordinal,
+                       "value": value, "state": "message_sent_unverified",
+                       "verified": False,
+                       "verify": "read the corresponding model variable with hummod_snapshot"})
 
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | str = 0,
                   expected: int | str | None = None, engine: str = "default",
                   ctrl_id: int | str | None = None, label: str | None = None,
@@ -1317,6 +1501,7 @@ def hummod_slider(panel_path: str, ordinal: int | str | None = None, pos: int | 
             "verify via hummod_snapshot")
     out = {"ok": True, "pos": pos, "located_by": how,
            "ctrl_id": target.ctrl_id, "slider_count": len(sliders),
+           "state": "message_sent", "verified": False,
            "verify": "snapshot the model value", "quirk": note}
     if resolved_value is not None:
         out["requested_value"] = float(value)
@@ -1349,6 +1534,7 @@ def _pos_for_value(p: Profile, panel_path: str, ctrl_id: int, want: float):
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_set_param(panel_path: str, name: str, value: float | str,
                      engine: str = "default", exact: bool | str = False) -> str:
     """Set a named model parameter through the panel's own stepper.
@@ -1384,10 +1570,34 @@ def hummod_set_param(panel_path: str, name: str, value: float | str,
     if target is None:
         raise RuntimeError(f"control {ctrl_id} not found on {panel_path!r}")
     b.set_slider(target.hwnd, _parent_of(target.hwnd), pos, commit_endscroll=True)
+    verified = False
+    readback = None
+    var_name = slot.get("var")
+    if var_name:
+        try:
+            path = _export_snapshot(b, p, f"_param_verify_{uuid4().hex}")
+            vals = parse_export(path, {str(var_name).lower()})
+            readback = next((float(v) for k, v in vals.items()
+                             if k.lower() == str(var_name).lower()), None)
+            verified = readback is not None and abs(readback - got) <= 1e-6
+            if readback is not None and not verified:
+                raise RuntimeError(
+                    f"parameter message sent but model readback differs: requested={want}, "
+                    f"mapped={got}, readback={readback}")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            return json.dumps({"ok": True, "panel": panel_path, "param": key,
+                               "requested_value": want, "value_at_pos": got, "pos": pos,
+                               "ctrl_id": ctrl_id, "var": var_name,
+                               "state": "message_sent_unverified", "verified": False,
+                               "verification_error": str(exc)})
     return json.dumps({"ok": True, "panel": panel_path, "param": key,
                        "requested_value": want, "value_at_pos": got, "pos": pos,
-                       "ctrl_id": ctrl_id, "var": slot.get("var"),
-                       "verify": f"snapshot {slot.get('var')!r}"})
+                       "ctrl_id": ctrl_id, "var": var_name,
+                       "state": "verified" if verified else "message_sent_unverified",
+                       "verified": verified, "readback": readback,
+                       "verify": f"snapshot {var_name!r}" if var_name else "no profile readback variable"})
 
 
 def _parent_of(hwnd: int) -> int:
@@ -1400,24 +1610,70 @@ def _export_snapshot(b: Bridge, p: Profile, name: str) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
     save_id = p.file.get("save_sol")
     if save_id is not None:
-        path = os.path.join(OUTDIR, safe_name + (".SOL" if not safe_name.lower().endswith(".sol") else ""))
-        if os.path.exists(path):
-            path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".SOL")
-        b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids),
-                           tail_markers=("</solution>",))
+        path = _unique_export_path(safe_name, ".SOL")
+        try:
+            b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids),
+                               tail_markers=("</solution>",))
+        except Exception:
+            _discard_export_path(path)
+            raise
+        _release_export_path(path)
     else:  # QCP family: ICs snapshot instead of SOL
         save_id = p.file.get("save_ics")
         if save_id is None:
             save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
-        path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
-        if os.path.exists(path):
-            path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
-        b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+        path = _unique_export_path(safe_name, ".ICS")
+        try:
+            b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+        except Exception:
+            _discard_export_path(path)
+            raise
+        _release_export_path(path)
     return path
+
+
+def _unique_export_path(name: str, extension: str) -> str:
+    """Return a new path without ever selecting an existing export.
+
+    Microseconds and a random suffix avoid same-second collisions. The final
+    existence check is repeated immediately before the native dialog opens;
+    callers must still treat the returned path as reserved for that export.
+    """
+    base, ext = os.path.splitext(name)
+    if ext.lower() == extension.lower():
+        name = base
+    with _EXPORT_LOCK:
+        candidate = os.path.join(OUTDIR, name + extension)
+        if not os.path.exists(candidate) and candidate not in _RESERVED_EXPORTS:
+            _RESERVED_EXPORTS.add(candidate)
+            return candidate
+        for _ in range(1000):
+            candidate = os.path.join(
+                OUTDIR, f"{name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid4().hex[:8]}{extension}")
+            if not os.path.exists(candidate) and candidate not in _RESERVED_EXPORTS:
+                _RESERVED_EXPORTS.add(candidate)
+                return candidate
+    raise RuntimeError("could not allocate a unique export path")
+
+
+def _release_export_path(path: str) -> None:
+    with _EXPORT_LOCK:
+        _RESERVED_EXPORTS.discard(path)
+
+
+def _discard_export_path(path: str) -> None:
+    """Release a reservation and remove a partial file created by a failed export."""
+    _release_export_path(path)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
 
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_snapshot(name: str, vars: list[str] | dict | None = None,
                     engine: str = "default", vars_csv: str = "") -> str:
     """Export engine state (HumMod: File > Save Solution .SOL; QCP: File > Save Initial Conditions .ICS) into the MCP output dir; optionally parse named variables.
@@ -1445,6 +1701,7 @@ def hummod_snapshot(name: str, vars: list[str] | dict | None = None,
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_save_ics(name: str, engine: str = "default") -> str:
     """Save Initial Conditions (.ICS) via File > Save Initial Conditions.
 
@@ -1458,15 +1715,19 @@ def hummod_save_ics(name: str, engine: str = "default") -> str:
     if save_id is None:
         save_id = b.menu_tree().walk("File/Save Initial Conditions").cmd_id
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-    path = os.path.join(OUTDIR, safe_name + (".ICS" if not safe_name.lower().endswith(".ics") else ""))
-    if os.path.exists(path):
-        path = os.path.join(OUTDIR, safe_name + "_" + datetime.now().strftime("%H%M%S") + ".ICS")
-    b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+    path = _unique_export_path(safe_name, ".ICS")
+    try:
+        b.save_file_dialog(save_id, path, tuple(p.dialog_edit_ids), tail_markers=())
+    except Exception:
+        _discard_export_path(path)
+        raise
+    _release_export_path(path)
     return json.dumps({"ok": True, "path": path})
 
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_load_ics(path: str, engine: str = "default") -> str:
     """Load Initial Conditions (.ICS) via File > Load Initial Conditions.
 
@@ -1525,6 +1786,7 @@ def hummod_history(sol_path: str, vars: list[str] | dict, max_points: int | str 
 
 @server.tool()
 @safe
+@engine_operation
 def hummod_dismiss_modal(engine: str = "default", prefer: int | str = 6) -> str:
     """Close any engine modal dialog (e.g. Tech window) that blocks automation.
 

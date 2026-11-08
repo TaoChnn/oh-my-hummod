@@ -37,4 +37,5 @@ async def main():
                                          {"name": "ics_load_check", "vars": BB_VARS}))
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
